@@ -5,10 +5,14 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'theme/zu_theme.dart';
 import 'router.dart';
 import 'firebase_options.dart';
+
+// ⚠️ Remplace par ta clé publique Stripe (dashboard.stripe.com → Développeurs → Clés API)
+const _stripePublishableKey = 'pk_test_VOTRE_CLE_PUBLIQUE_ICI';
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -34,6 +38,10 @@ void main() async {
 
   // Firebase
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+
+  // Stripe
+  Stripe.publishableKey = _stripePublishableKey;
+  await Stripe.instance.applySettings();
 
   // Notifications push
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);

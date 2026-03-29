@@ -1,6 +1,9 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:flutter_stripe/flutter_stripe.dart';
 import '../models/models.dart';
 
 // ══════════════════════════════════════════════
@@ -515,6 +518,51 @@ final creditTransactionsProvider = StreamProvider<List<CreditTransaction>>((ref)
       .snapshots()
       .map((s) => s.docs.map(CreditTransaction.fromFirestore).toList());
 });
+
+// ══════════════════════════════════════════════
+//  PAYMENT SERVICE (Stripe)
+// ══════════════════════════════════════════════
+
+class PaymentService {
+  final _functions = FirebaseFunctions.instanceFor(region: 'europe-west3');
+
+  /// Lance le paiement Stripe pour un pack de crédits.
+  /// Lève une [StripeException] si l'utilisateur annule.
+  Future<void> buyCredits(String packId) async {
+    // 1. Crée le PaymentIntent côté serveur
+    final result = await _functions
+        .httpsCallable('createPaymentIntent')
+        .call({'packId': packId});
+
+    final data         = Map<String, dynamic>.from(result.data as Map);
+    final clientSecret = data['clientSecret'] as String;
+    final ephemeralKey = data['ephemeralKey'] as String;
+    final customerId   = data['customerId'] as String;
+
+    // 2. Initialise le Payment Sheet
+    await Stripe.instance.initPaymentSheet(
+      paymentSheetParameters: SetupPaymentSheetParameters(
+        paymentIntentClientSecret: clientSecret,
+        ephemeralKeySecret:        ephemeralKey,
+        customerId:                customerId,
+        merchantDisplayName:       'Zupadel',
+        style:                     ThemeMode.dark,
+        appearance: const PaymentSheetAppearance(
+          colors: PaymentSheetAppearanceColors(
+            primary: Color(0xFF4EE06E),
+            background: Color(0xFF0D0F14),
+            componentBackground: Color(0xFF1A1D24),
+          ),
+        ),
+      ),
+    );
+
+    // 3. Affiche le Payment Sheet → peut lancer StripeException si annulé
+    await Stripe.instance.presentPaymentSheet();
+  }
+}
+
+final paymentServiceProvider = Provider<PaymentService>((ref) => PaymentService());
 
 // ══════════════════════════════════════════════
 //  USER STATS

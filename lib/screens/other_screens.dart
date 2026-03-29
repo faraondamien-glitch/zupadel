@@ -681,11 +681,51 @@ class _WinRateChart extends StatelessWidget {
 //  CRÉDITS
 // ══════════════════════════════════════════════
 
-class CreditsScreen extends ConsumerWidget {
+class CreditsScreen extends ConsumerStatefulWidget {
   const CreditsScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<CreditsScreen> createState() => _CreditsScreenState();
+}
+
+class _CreditsScreenState extends ConsumerState<CreditsScreen> {
+  String? _loadingPack;
+
+  Future<void> _buyPack(String packId) async {
+    setState(() => _loadingPack = packId);
+    try {
+      await ref.read(paymentServiceProvider).buyCredits(packId);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: ZuTheme.bgCard,
+            content: Text(
+              'Paiement réussi ! Tes crédits arrivent dans quelques secondes.',
+              style: TextStyle(color: ZuTheme.textPrimary),
+            ),
+          ),
+        );
+      }
+    } on StripeException catch (e) {
+      if (e.error.code == FailureCode.Canceled) return; // utilisateur a annulé
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur paiement : ${e.error.localizedMessage ?? e.error.message}')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur : $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loadingPack = null);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final user  = ref.watch(currentUserProvider).valueOrNull;
     final txs   = ref.watch(creditTransactionsProvider);
 
@@ -725,11 +765,11 @@ class CreditsScreen extends ConsumerWidget {
             mainAxisSpacing: 10,
             crossAxisSpacing: 10,
             childAspectRatio: 1.4,
-            children: const [
-              _PackCard(name: 'Starter', credits: 10, price: 5, popular: false),
-              _PackCard(name: 'Joueur',  credits: 25, price: 10, popular: true),
-              _PackCard(name: 'Pro',     credits: 60, price: 20, popular: false),
-              _PackCard(name: 'Elite',   credits: 150, price: 40, popular: false, gold: true),
+            children: [
+              _PackCard(name: 'Starter', credits: 10,  price: 5,  popular: false, packId: 'starter', loading: _loadingPack == 'starter', onTap: () => _buyPack('starter')),
+              _PackCard(name: 'Joueur',  credits: 25,  price: 10, popular: true,  packId: 'joueur',  loading: _loadingPack == 'joueur',  onTap: () => _buyPack('joueur')),
+              _PackCard(name: 'Pro',     credits: 60,  price: 20, popular: false, packId: 'pro',     loading: _loadingPack == 'pro',     onTap: () => _buyPack('pro')),
+              _PackCard(name: 'Elite',   credits: 150, price: 40, popular: false, packId: 'elite',   loading: _loadingPack == 'elite',   onTap: () => _buyPack('elite'), gold: true),
             ],
           ),
           const SizedBox(height: 20),
@@ -761,22 +801,26 @@ class _PackCard extends StatelessWidget {
   final double price;
   final bool popular;
   final bool gold;
+  final String packId;
+  final bool loading;
+  final VoidCallback? onTap;
 
   const _PackCard({
     required this.name,
     required this.credits,
     required this.price,
     required this.popular,
+    required this.packId,
     this.gold = false,
+    this.loading = false,
+    this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     final color = gold ? ZuTheme.accentGold : ZuTheme.accent;
     return GestureDetector(
-      onTap: () {
-        // TODO: Stripe payment sheet
-      },
+      onTap: loading ? null : onTap,
       child: Container(
         decoration: BoxDecoration(
           color: ZuTheme.bgCard,
@@ -807,7 +851,12 @@ class _PackCard extends StatelessWidget {
                   '${price.toStringAsFixed(0)}€',
                   style: GoogleFonts.syne(fontSize: 16, fontWeight: FontWeight.w700),
                 ),
-                if (popular)
+                if (loading)
+                  const SizedBox(
+                    width: 16, height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else if (popular)
                   ZuTag('Populaire', style: ZuTagStyle.green),
               ],
             ),
