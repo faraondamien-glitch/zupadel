@@ -1,5 +1,42 @@
 {
   "endpoints": {
+    "createPaymentIntent": {
+      "availableMemoryMb": null,
+      "timeoutSeconds": null,
+      "minInstances": null,
+      "maxInstances": null,
+      "ingressSettings": null,
+      "concurrency": null,
+      "serviceAccountEmail": null,
+      "vpc": null,
+      "platform": "gcfv2",
+      "region": ["europe-west3"],
+      "labels": {},
+      "callableTrigger": {},
+      "secretEnvironmentVariables": [
+        {"key": "STRIPE_SECRET_KEY", "secret": "STRIPE_SECRET_KEY"}
+      ],
+      "entryPoint": "createPaymentIntent"
+    },
+    "stripeWebhook": {
+      "availableMemoryMb": null,
+      "timeoutSeconds": null,
+      "minInstances": null,
+      "maxInstances": null,
+      "ingressSettings": null,
+      "concurrency": null,
+      "serviceAccountEmail": null,
+      "vpc": null,
+      "platform": "gcfv2",
+      "region": ["europe-west3"],
+      "labels": {},
+      "httpsTrigger": {},
+      "secretEnvironmentVariables": [
+        {"key": "STRIPE_SECRET_KEY",     "secret": "STRIPE_SECRET_KEY"},
+        {"key": "STRIPE_WEBHOOK_SECRET", "secret": "STRIPE_WEBHOOK_SECRET"}
+      ],
+      "entryPoint": "stripeWebhook"
+    },
     "autoValidateMatches": {
       "availableMemoryMb": null,
       "timeoutSeconds": null,

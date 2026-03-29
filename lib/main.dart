@@ -12,7 +12,7 @@ import 'router.dart';
 import 'firebase_options.dart';
 
 // ⚠️ Remplace par ta clé publique Stripe (dashboard.stripe.com → Développeurs → Clés API)
-const _stripePublishableKey = 'pk_test_VOTRE_CLE_PUBLIQUE_ICI';
+const _stripePublishableKey = 'pk_live_51SjfxgECr8fTdsDdlKJHv6At70VCQ5MEqRQUN0H1wIPvxgW34Wb6Ij4IGb9NS0UddlJEwPQj88A2LrcoQcgIF0d300cQ2jydVe';
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
