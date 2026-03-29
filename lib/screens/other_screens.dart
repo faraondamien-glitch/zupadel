@@ -174,7 +174,7 @@ class _TournamentRegisterScreenState extends ConsumerState<TournamentRegisterScr
                       children: [
                         _FormField(
                           label: 'Prénom Nom',
-                          value: user?.pseudo ?? '',
+                          value: user?.fullName ?? '',
                           readOnly: true,
                         ),
                         const Divider(height: 16),
@@ -435,7 +435,7 @@ class ProfileScreen extends ConsumerWidget {
                           ),
                           child: Center(
                             child: Text(
-                              user?.pseudo.substring(0, 2).toUpperCase() ?? 'ZP',
+                              user?.initials ?? 'ZP',
                               style: GoogleFonts.syne(
                                 fontSize: 28, fontWeight: FontWeight.w800,
                                 color: ZuTheme.bgPrimary,
@@ -457,7 +457,7 @@ class ProfileScreen extends ConsumerWidget {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  Text(user?.pseudo ?? 'Joueur', style: Theme.of(context).textTheme.displayMedium),
+                  Text(user?.fullName ?? 'Joueur', style: Theme.of(context).textTheme.displayMedium),
                   const SizedBox(height: 4),
                   Text(
                     'Niveau ${user?.level ?? 1}${user?.city != null ? ' · ${user!.city}' : ''}${user?.fftRank != null ? ' · FFT ${user!.fftRank}' : ''}',

@@ -2,10 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'theme/zu_theme.dart';
 import 'router.dart';
 import 'firebase_options.dart';
+
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -25,9 +33,11 @@ void main() async {
   ]);
 
   // Firebase
- await Firebase.initializeApp(
-  options: DefaultFirebaseOptions.currentPlatform,
-);
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+
+  // Notifications push
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  await _initFcm();
 
   // Locale française pour les dates
   await initializeDateFormatting('fr_FR', null);
@@ -37,6 +47,34 @@ void main() async {
       child: ZupadelApp(),
     ),
   );
+}
+
+Future<void> _initFcm() async {
+  final messaging = FirebaseMessaging.instance;
+
+  await messaging.requestPermission(
+    alert: true,
+    badge: true,
+    sound: true,
+  );
+
+  final token = await messaging.getToken();
+  final user = FirebaseAuth.instance.currentUser;
+  if (token != null && user != null) {
+    await FirebaseFirestore.instance.collection('users').doc(user.uid).update({
+      'fcmToken': token,
+    });
+  }
+
+  // Rafraîchir le token si renouvelé
+  messaging.onTokenRefresh.listen((newToken) {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null) {
+      FirebaseFirestore.instance.collection('users').doc(uid).update({
+        'fcmToken': newToken,
+      });
+    }
+  });
 }
 
 class ZupadelApp extends ConsumerWidget {

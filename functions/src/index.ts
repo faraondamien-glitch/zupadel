@@ -2,12 +2,15 @@ import * as admin from "firebase-admin";
 import {onSchedule} from "firebase-functions/v2/scheduler";
 import {onDocumentCreated, onDocumentUpdated} from "firebase-functions/v2/firestore";
 
-admin.initializeApp();
-const db = admin.firestore();
+function getDb(): admin.firestore.Firestore {
+  if (!admin.apps.length) admin.initializeApp();
+  return admin.firestore();
+}
 
 export const autoValidateMatches = onSchedule(
   {schedule: "0 0 * * *", timeZone: "Europe/Paris", region: "europe-west3"},
   async () => {
+    const db = getDb();
     const now = admin.firestore.Timestamp.now();
     const snapshot = await db.collection("matches")
       .where("status", "==", "open")
@@ -25,6 +28,7 @@ export const autoValidateMatches = onSchedule(
 export const autoAcceptPlayers = onSchedule(
   {schedule: "*/30 * * * *", timeZone: "Europe/Paris", region: "europe-west3"},
   async () => {
+    const db = getDb();
     const cutoff = admin.firestore.Timestamp.fromDate(
       new Date(Date.now() - 6 * 60 * 60 * 1000)
     );
@@ -55,6 +59,7 @@ export const autoAcceptPlayers = onSchedule(
 export const onMatchCreated = onDocumentCreated(
   {document: "matches/{matchId}", region: "europe-west3"},
   async (event) => {
+    const db = getDb();
     const match = event.data?.data();
     if (!match) return;
     if (match.visibility !== "public") return;
@@ -77,6 +82,7 @@ export const onMatchCreated = onDocumentCreated(
 export const onMatchCancelled = onDocumentUpdated(
   {document: "matches/{matchId}", region: "europe-west3"},
   async (event) => {
+    const db = getDb();
     const before = event.data?.before.data();
     const after = event.data?.after.data();
     if (!before || !after) return;
@@ -153,6 +159,7 @@ export const onTournamentStatusChanged = onDocumentUpdated(
 export const updateStatsOnMatchFinish = onDocumentUpdated(
   {document: "matches/{matchId}", region: "europe-west3"},
   async (event) => {
+    const db = getDb();
     const before = event.data?.before.data();
     const after = event.data?.after.data();
     if (!before || !after) return;
@@ -174,6 +181,7 @@ async function sendNotification(
   uid: string,
   payload: {title: string; body: string; data?: Record<string, string>}
 ) {
+  const db = getDb();
   try {
     const userDoc = await db.collection("users").doc(uid).get();
     const fcmToken = userDoc.data()?.fcmToken;

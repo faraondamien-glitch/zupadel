@@ -202,7 +202,7 @@ class _HeroHeader extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    u?.pseudo ?? 'Joueur',
+                    u?.displayName ?? 'Joueur',
                     style: GoogleFonts.syne(fontSize: 22, fontWeight: FontWeight.w800, color: ZuTheme.textPrimary),
                   ),
                   const SizedBox(height: 10),
@@ -223,7 +223,7 @@ class _HeroHeader extends StatelessWidget {
               onTap: () => context.go('/profile'),
               child: ZuAvatar(
                 photoUrl: u?.photoUrl,
-                initials: u?.pseudo.substring(0, 2) ?? 'ZP',
+                initials: u?.initials ?? 'ZP',
                 size: 48,
               ),
             ),

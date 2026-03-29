@@ -1,4 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -8,6 +10,15 @@ import '../screens/match_screens.dart';
 import '../screens/other_screens.dart';
 import '../services/services.dart';
 import '../theme/zu_theme.dart';
+
+Future<void> _saveFcmToken(String uid) async {
+  final token = await FirebaseMessaging.instance.getToken();
+  if (token != null) {
+    await FirebaseFirestore.instance.collection('users').doc(uid).update({
+      'fcmToken': token,
+    });
+  }
+}
 import '../widgets/widgets.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
@@ -228,10 +239,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _loading = true);
     try {
-      await ref.read(authServiceProvider).signInWithEmail(
+      final cred = await ref.read(authServiceProvider).signInWithEmail(
         _emailCtrl.text.trim(),
         _passCtrl.text,
       );
+      await _saveFcmToken(cred.user!.uid);
     } on FirebaseAuthException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -260,8 +272,9 @@ class RegisterScreen extends ConsumerStatefulWidget {
 
 class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   final _formKey       = GlobalKey<FormState>();
+  final _firstNameCtrl = TextEditingController();
+  final _lastNameCtrl  = TextEditingController();
   final _emailCtrl     = TextEditingController();
-  final _pseudoCtrl    = TextEditingController();
   final _passCtrl      = TextEditingController();
   final _referralCtrl  = TextEditingController();
   bool _loading        = false;
@@ -279,9 +292,18 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
             child: Column(
               children: [
                 TextFormField(
-                  controller: _pseudoCtrl,
+                  controller: _firstNameCtrl,
                   decoration: const InputDecoration(
-                    labelText: 'Pseudonyme',
+                    labelText: 'Prénom',
+                    prefixIcon: Icon(Icons.person_outline_rounded),
+                  ),
+                  validator: (v) => (v?.length ?? 0) >= 2 ? null : 'Minimum 2 caractères',
+                ),
+                const SizedBox(height: 14),
+                TextFormField(
+                  controller: _lastNameCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Nom',
                     prefixIcon: Icon(Icons.person_outline_rounded),
                   ),
                   validator: (v) => (v?.length ?? 0) >= 2 ? null : 'Minimum 2 caractères',
@@ -366,9 +388,11 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
       await ref.read(userServiceProvider).createUser(
         uid:          cred.user!.uid,
         email:        _emailCtrl.text.trim(),
-        pseudo:       _pseudoCtrl.text.trim(),
+        firstName:    _firstNameCtrl.text.trim(),
+        lastName:     _lastNameCtrl.text.trim(),
         referralCode: _referralCtrl.text.trim().isEmpty ? null : _referralCtrl.text.trim(),
       );
+      await _saveFcmToken(cred.user!.uid);
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
     } finally {

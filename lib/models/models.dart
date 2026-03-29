@@ -15,7 +15,8 @@ enum CreditOpType {
 
 class ZuUser {
   final String id;
-  final String pseudo;
+  final String firstName;
+  final String lastName;
   final String email;
   final String? photoUrl;
   final int level;           // 1–7
@@ -30,7 +31,8 @@ class ZuUser {
 
   const ZuUser({
     required this.id,
-    required this.pseudo,
+    required this.firstName,
+    required this.lastName,
     required this.email,
     this.photoUrl,
     required this.level,
@@ -44,11 +46,25 @@ class ZuUser {
     required this.createdAt,
   });
 
+  /// Prénom seul — pour les contextes informels (match, chat…)
+  String get displayName => firstName;
+
+  /// Prénom + Nom — pour le profil
+  String get fullName => '$firstName $lastName';
+
+  /// Initiales pour l'avatar
+  String get initials {
+    final f = firstName.isNotEmpty ? firstName[0].toUpperCase() : '';
+    final l = lastName.isNotEmpty ? lastName[0].toUpperCase() : '';
+    return '$f$l';
+  }
+
   factory ZuUser.fromFirestore(DocumentSnapshot doc) {
     final d = doc.data() as Map<String, dynamic>;
     return ZuUser(
       id:            doc.id,
-      pseudo:        d['pseudo'] ?? '',
+      firstName:     d['firstName'] ?? d['pseudo'] ?? '',
+      lastName:      d['lastName'] ?? '',
       email:         d['email'] ?? '',
       photoUrl:      d['photoUrl'],
       level:         d['level'] ?? 1,
@@ -64,7 +80,8 @@ class ZuUser {
   }
 
   Map<String, dynamic> toFirestore() => {
-    'pseudo':        pseudo,
+    'firstName':     firstName,
+    'lastName':      lastName,
     'email':         email,
     'photoUrl':      photoUrl,
     'level':         level,
@@ -79,7 +96,7 @@ class ZuUser {
   };
 
   ZuUser copyWith({int? credits, int? level, String? fftLicense, String? fftRank}) => ZuUser(
-    id: id, pseudo: pseudo, email: email, photoUrl: photoUrl,
+    id: id, firstName: firstName, lastName: lastName, email: email, photoUrl: photoUrl,
     level: level ?? this.level,
     fftLicense: fftLicense ?? this.fftLicense,
     fftRank: fftRank ?? this.fftRank,

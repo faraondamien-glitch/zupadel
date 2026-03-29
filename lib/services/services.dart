@@ -50,15 +50,17 @@ class UserService {
   Future<void> createUser({
     required String uid,
     required String email,
-    required String pseudo,
+    required String firstName,
+    required String lastName,
     String? referralCode,
   }) async {
-    final code = _generateCode(pseudo);
+    final code = _generateCode(firstName);
     final batch = _db.batch();
     final userRef = _db.collection('users').doc(uid);
 
     batch.set(userRef, {
-      'pseudo':        pseudo,
+      'firstName':     firstName,
+      'lastName':      lastName,
       'email':         email,
       'level':         1,
       'credits':       10, // C1 : crédits offerts à l'inscription
@@ -115,7 +117,8 @@ class UserService {
 
   Future<void> updateProfile({
     required String uid,
-    String? pseudo,
+    String? firstName,
+    String? lastName,
     int? level,
     String? city,
     String? fftLicense,
@@ -123,12 +126,13 @@ class UserService {
     String? photoUrl,
   }) async {
     final data = <String, dynamic>{};
-    if (pseudo != null)     data['pseudo']     = pseudo;
-    if (level != null)      data['level']      = level;
-    if (city != null)       data['city']       = city;
-    if (fftLicense != null) data['fftLicense'] = fftLicense;
-    if (fftRank != null)    data['fftRank']    = fftRank;
-    if (photoUrl != null)   data['photoUrl']   = photoUrl;
+    if (firstName != null)   data['firstName']  = firstName;
+    if (lastName != null)    data['lastName']   = lastName;
+    if (level != null)       data['level']      = level;
+    if (city != null)        data['city']       = city;
+    if (fftLicense != null)  data['fftLicense'] = fftLicense;
+    if (fftRank != null)     data['fftRank']    = fftRank;
+    if (photoUrl != null)    data['photoUrl']   = photoUrl;
     if (data.isEmpty) return;
     await _db.collection('users').doc(uid).update(data);
   }
@@ -178,11 +182,11 @@ class MatchService {
     String? note,
   }) async {
     final user = await FirebaseFirestore.instance.collection('users').doc(_uid).get();
-    final pseudo = user.data()?['pseudo'] ?? 'Joueur';
+    final firstName = user.data()?['firstName'] ?? user.data()?['pseudo'] ?? 'Joueur';
 
     final ref = await _db.collection('matches').add({
       'organizerId':     _uid,
-      'organizerPseudo': pseudo,
+      'organizerPseudo': firstName,
       'club':            club,
       'startTime':       Timestamp.fromDate(startTime),
       'durationMinutes': duration,
