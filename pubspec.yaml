@@ -26,7 +26,8 @@ dependencies:
   go_router: ^13.2.0
 
   # Paiement
-  flutter_stripe: ^10.1.1
+  flutter_stripe: ^10.1.1    # Web uniquement
+  in_app_purchase: ^3.2.0    # iOS + Android (Apple IAP / Google Play Billing)
 
   # UI / UX
   google_fonts: ^6.1.0
