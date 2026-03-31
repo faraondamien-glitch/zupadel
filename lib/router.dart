@@ -65,7 +65,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/matches/:id/finish',
-        builder: (_, state) => _FinishMatchScreen(matchId: state.pathParameters['id']!),
+        builder: (_, state) => FinishMatchScreen(matchId: state.pathParameters['id']!),
       ),
       GoRoute(
         path: '/matches/:id/review',
@@ -73,7 +73,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/tournaments/:id',
-        builder: (_, state) => _TournamentDetailScreen(tournamentId: state.pathParameters['id']!),
+        builder: (_, state) => TournamentDetailScreen(tournamentId: state.pathParameters['id']!),
       ),
       GoRoute(
         path: '/tournaments/:id/register',
@@ -82,6 +82,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/profile/share-stats',
         builder: (_, __) => const ShareStatsScreen(),
+      ),
+      GoRoute(
+        path: '/profile/edit',
+        builder: (_, __) => const ProfileEditScreen(),
       ),
       GoRoute(
         path: '/settings/notifications',
@@ -211,7 +215,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   Align(
                     alignment: Alignment.centerRight,
                     child: TextButton(
-                      onPressed: () {},
+                      onPressed: _sendPasswordReset,
                       child: Text(
                         'Mot de passe oublié ?',
                         style: GoogleFonts.dmSans(fontSize: 12, color: ZuTheme.textSecondary),
@@ -267,6 +271,30 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       }
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _sendPasswordReset() async {
+    final email = _emailCtrl.text.trim();
+    if (email.isEmpty || !email.contains('@')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Saisis ton email d\'abord.')),
+      );
+      return;
+    }
+    try {
+      await ref.read(authServiceProvider).sendPasswordReset(email);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Email de réinitialisation envoyé à $email')),
+        );
+      }
+    } on FirebaseAuthException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_authError(e.code))),
+        );
+      }
     }
   }
 
@@ -416,29 +444,4 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   }
 }
 
-// ── Placeholders ─────────────────────────────────────────────────
-
-class _FinishMatchScreen extends StatelessWidget {
-  final String matchId;
-  const _FinishMatchScreen({required this.matchId});
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Terminer le match')),
-    body: const Center(child: Text('Saisie du score — TODO')),
-  );
-}
-
-class _TournamentDetailScreen extends StatelessWidget {
-  final String tournamentId;
-  const _TournamentDetailScreen({required this.tournamentId});
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Tournoi')),
-    body: const Center(child: Text('Détail tournoi — TODO')),
-  );
-}
-
-// Needed import for FirebaseAuthException usage in login
 

@@ -4,10 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:image_picker/image_picker.dart';
 import '../models/models.dart';
 
 // ══════════════════════════════════════════════
@@ -144,6 +146,16 @@ class UserService {
     await _db.collection('users').doc(uid).update(data);
   }
 
+  /// Télécharge la photo de profil sur Firebase Storage et retourne l'URL publique.
+  Future<String> uploadProfilePhoto({required String uid, required XFile image}) async {
+    final ref   = FirebaseStorage.instance.ref().child('profile_photos/$uid.jpg');
+    final bytes = await image.readAsBytes();
+    await ref.putData(bytes, SettableMetadata(contentType: 'image/jpeg'));
+    final url = await ref.getDownloadURL();
+    await _db.collection('users').doc(uid).update({'photoUrl': url});
+    return url;
+  }
+
   String _generateCode(String pseudo) {
     final prefix = pseudo.length >= 3 ? pseudo.substring(0, 3).toUpperCase() : pseudo.toUpperCase();
     final suffix = DateTime.now().millisecondsSinceEpoch.toString().substring(9);
@@ -274,8 +286,10 @@ class MatchService {
       // Débit D1
       tx.update(userRef, {'credits': FieldValue.increment(-cost)});
 
-      // Ajout en pending
-      tx.update(matchRef, {'pendingIds': FieldValue.arrayUnion([_uid])});
+      // Ajout en pending + tracking pari
+      final matchUpdate = <String, dynamic>{'pendingIds': FieldValue.arrayUnion([_uid])};
+      if (placeBet) matchUpdate['bettorIds'] = FieldValue.arrayUnion([_uid]);
+      tx.update(matchRef, matchUpdate);
 
       // Log transaction
       tx.set(_db.collection('creditTransactions').doc(), {
@@ -330,11 +344,44 @@ class MatchService {
     });
   }
 
-  Future<void> finishMatch({required String matchId}) async {
-    await _db.collection('matches').doc(matchId).update({
-      'status': MatchStatus.finished.name,
-    });
-    // TODO: send FCM N4, N5
+  /// [winnerTeam] : 1 = joueurs[0..half-1] ont gagné, 2 = joueurs[half..n-1] ont gagné.
+  Future<void> finishMatch({
+    required String matchId,
+    required String score,
+    required int winnerTeam,
+  }) async {
+    final matchRef = _db.collection('matches').doc(matchId);
+    final matchDoc = await matchRef.get();
+    final match    = ZuMatch.fromFirestore(matchDoc);
+    final players  = match.playerIds;
+    final half     = (players.length / 2).ceil();
+    final team1    = players.sublist(0, half);
+    final team2    = players.length > half ? players.sublist(half) : <String>[];
+    final winners  = winnerTeam == 1 ? team1 : team2;
+    final losers   = winnerTeam == 1 ? team2 : team1;
+
+    final batch = _db.batch();
+    batch.update(matchRef, {'status': MatchStatus.finished.name, 'score': score});
+
+    // Distribution des paris
+    final winBettors  = winners.where((id) => match.bettorIds.contains(id)).toList();
+    final loseBettors = losers.where((id) => match.bettorIds.contains(id)).toList();
+    if (winBettors.isNotEmpty && loseBettors.isNotEmpty) {
+      // Chaque gagnant-parieur récupère (nb perdants-parieurs / nb gagnants-parieurs) crédits
+      final gain = (loseBettors.length / winBettors.length).ceil();
+      for (final uid in winBettors) {
+        final uDoc = await _db.collection('users').doc(uid).get();
+        final cur  = uDoc.data()?['credits'] as int? ?? 0;
+        batch.update(_db.collection('users').doc(uid), {'credits': FieldValue.increment(gain)});
+        batch.set(_db.collection('creditTransactions').doc(), {
+          'userId': uid, 'type': 'betWin', 'amount': gain,
+          'balanceBefore': cur, 'balanceAfter': cur + gain,
+          'refId': matchId, 'description': 'Pari gagné — ${match.club}',
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
+    }
+    await batch.commit();
   }
 
   Future<void> cancelMatch({required String matchId}) async {

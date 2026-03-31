@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -10,6 +11,7 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
@@ -302,6 +304,393 @@ class _TournamentRegisterScreenState extends ConsumerState<TournamentRegisterScr
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+}
+
+// ══════════════════════════════════════════════
+//  DÉTAIL TOURNOI
+// ══════════════════════════════════════════════
+
+class TournamentDetailScreen extends ConsumerWidget {
+  final String tournamentId;
+  const TournamentDetailScreen({super.key, required this.tournamentId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final tAsync = ref.watch(tournamentDetailProvider(tournamentId));
+    final uid    = ref.watch(authStateProvider).valueOrNull?.uid;
+    final df     = DateFormat('d MMM yyyy', 'fr_FR');
+
+    return tAsync.when(
+      loading: () => const Scaffold(body: Center(child: CircularProgressIndicator())),
+      error:   (e, _) => Scaffold(body: Center(child: Text('$e'))),
+      data: (t) {
+        if (t == null) return const Scaffold(body: Center(child: Text('Tournoi introuvable')));
+        final isRegistered = uid != null && t.registeredIds.contains(uid);
+
+        return Scaffold(
+          appBar: AppBar(
+            title: Text(t.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+            actions: [
+              if (t.isOpen && !isRegistered)
+                TextButton(
+                  onPressed: () => context.go('/tournaments/$tournamentId/register'),
+                  child: Text('S\'inscrire',
+                    style: GoogleFonts.syne(fontWeight: FontWeight.w700, color: ZuTheme.accent)),
+                ),
+            ],
+          ),
+          body: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+            children: [
+              // Status banner
+              ZuCard(
+                borderColor: t.isOpen ? ZuTheme.accent.withOpacity(0.3) : ZuTheme.borderColor,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(t.title, style: Theme.of(context).textTheme.displaySmall),
+                        ),
+                        ZuTag(
+                          t.isOpen ? 'Inscriptions ouvertes' : 'Complet',
+                          style: t.isOpen ? ZuTagStyle.green : ZuTagStyle.red,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    _InfoRow(icon: '📍', text: t.club),
+                    const SizedBox(height: 4),
+                    _InfoRow(icon: '📅', text: '${df.format(t.startDate)} → ${df.format(t.endDate)}'),
+                    const SizedBox(height: 4),
+                    _InfoRow(icon: '👥', text: '${t.registeredIds.length} / ${t.maxPlayers} joueurs inscrits'),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8, runSpacing: 8,
+                      children: [
+                        ZuTag(t.level,    style: ZuTagStyle.gold),
+                        ZuTag(t.category, style: ZuTagStyle.blue),
+                        ZuTag(t.surface,  style: ZuTagStyle.neutral),
+                        if (!t.isFree)
+                          ZuTag('${t.entryFee.toStringAsFixed(0)} €', style: ZuTagStyle.green),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Description
+              if (t.description.isNotEmpty) ...[
+                ZuSectionTitle('Description'),
+                const SizedBox(height: 8),
+                ZuCard(
+                  child: Text(t.description, style: Theme.of(context).textTheme.bodyMedium),
+                ),
+                const SizedBox(height: 16),
+              ],
+
+              // Contact
+              ZuSectionTitle('Contact'),
+              const SizedBox(height: 8),
+              ZuCard(
+                child: Column(
+                  children: [
+                    _InfoRow(icon: '👤', text: t.contactName),
+                    const SizedBox(height: 4),
+                    _InfoRow(icon: '✉️', text: t.contactEmail),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // CTA
+              if (isRegistered)
+                ZuCard(
+                  borderColor: ZuTheme.accent.withOpacity(0.3),
+                  child: Row(
+                    children: [
+                      const Text('✅', style: TextStyle(fontSize: 20)),
+                      const SizedBox(width: 12),
+                      Text('Tu es inscrit à ce tournoi !',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: ZuTheme.accent)),
+                    ],
+                  ),
+                )
+              else if (t.isOpen)
+                ZuButton(
+                  label: t.isFree
+                      ? 'S\'inscrire gratuitement'
+                      : 'Payer ${t.entryFee.toStringAsFixed(0)} € et s\'inscrire',
+                  onPressed: () => context.go('/tournaments/$tournamentId/register'),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _InfoRow extends StatelessWidget {
+  final String icon;
+  final String text;
+  const _InfoRow({required this.icon, required this.text});
+
+  @override
+  Widget build(BuildContext context) => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(icon, style: const TextStyle(fontSize: 14)),
+      const SizedBox(width: 8),
+      Expanded(child: Text(text, style: Theme.of(context).textTheme.bodyMedium)),
+    ],
+  );
+}
+
+// ══════════════════════════════════════════════
+//  ÉDITION DU PROFIL
+// ══════════════════════════════════════════════
+
+class ProfileEditScreen extends ConsumerStatefulWidget {
+  const ProfileEditScreen({super.key});
+
+  @override
+  ConsumerState<ProfileEditScreen> createState() => _ProfileEditScreenState();
+}
+
+class _ProfileEditScreenState extends ConsumerState<ProfileEditScreen> {
+  final _firstNameCtrl  = TextEditingController();
+  final _lastNameCtrl   = TextEditingController();
+  final _cityCtrl       = TextEditingController();
+  final _fftLicenseCtrl = TextEditingController();
+  final _fftRankCtrl    = TextEditingController();
+  int   _level          = 1;
+  bool  _loading        = false;
+  bool  _photoLoading   = false;
+  bool  _initialized    = false;
+
+  @override
+  void dispose() {
+    _firstNameCtrl.dispose();
+    _lastNameCtrl.dispose();
+    _cityCtrl.dispose();
+    _fftLicenseCtrl.dispose();
+    _fftRankCtrl.dispose();
+    super.dispose();
+  }
+
+  void _initFromUser(ZuUser user) {
+    if (_initialized) return;
+    _firstNameCtrl.text  = user.firstName;
+    _lastNameCtrl.text   = user.lastName;
+    _cityCtrl.text       = user.city ?? '';
+    _fftLicenseCtrl.text = user.fftLicense ?? '';
+    _fftRankCtrl.text    = user.fftRank ?? '';
+    _level               = user.level;
+    _initialized         = true;
+  }
+
+  Future<void> _pickPhoto(String uid) async {
+    final picker = ImagePicker();
+    final image  = await picker.pickImage(source: ImageSource.gallery, imageQuality: 80);
+    if (image == null) return;
+    setState(() => _photoLoading = true);
+    try {
+      await ref.read(userServiceProvider).uploadProfilePhoto(uid: uid, image: image);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Photo mise à jour !')),
+        );
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+    } finally {
+      if (mounted) setState(() => _photoLoading = false);
+    }
+  }
+
+  Future<void> _save(String uid) async {
+    setState(() => _loading = true);
+    try {
+      await ref.read(userServiceProvider).updateProfile(
+        uid:        uid,
+        firstName:  _firstNameCtrl.text.trim(),
+        lastName:   _lastNameCtrl.text.trim(),
+        level:      _level,
+        city:       _cityCtrl.text.trim().isEmpty ? null : _cityCtrl.text.trim(),
+        fftLicense: _fftLicenseCtrl.text.trim().isEmpty ? null : _fftLicenseCtrl.text.trim(),
+        fftRank:    _fftRankCtrl.text.trim().isEmpty ? null : _fftRankCtrl.text.trim(),
+      );
+      if (mounted) {
+        context.pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Profil mis à jour !')),
+        );
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final userAsync = ref.watch(currentUserProvider);
+
+    return userAsync.when(
+      loading: () => const Scaffold(body: Center(child: CircularProgressIndicator())),
+      error:   (e, _) => Scaffold(body: Center(child: Text('$e'))),
+      data: (user) {
+        if (user == null) return const Scaffold(body: Center(child: Text('Non connecté')));
+        _initFromUser(user);
+
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('Modifier le profil'),
+            actions: [
+              TextButton(
+                onPressed: _loading ? null : () => _save(user.id),
+                child: Text('Sauvegarder',
+                  style: GoogleFonts.syne(fontWeight: FontWeight.w700, color: ZuTheme.accent)),
+              ),
+            ],
+          ),
+          body: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              // Avatar + photo picker
+              Center(
+                child: GestureDetector(
+                  onTap: () => _pickPhoto(user.id),
+                  child: Stack(
+                    children: [
+                      Container(
+                        width: 88, height: 88,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: user.photoUrl == null
+                              ? const LinearGradient(colors: [ZuTheme.accent, ZuTheme.accent2])
+                              : null,
+                          image: user.photoUrl != null
+                              ? DecorationImage(
+                                  image: NetworkImage(user.photoUrl!),
+                                  fit: BoxFit.cover,
+                                )
+                              : null,
+                        ),
+                        child: user.photoUrl == null
+                            ? Center(
+                                child: Text(user.initials,
+                                  style: GoogleFonts.syne(
+                                    fontSize: 28, fontWeight: FontWeight.w800,
+                                    color: ZuTheme.bgPrimary,
+                                  ),
+                                ),
+                              )
+                            : null,
+                      ),
+                      if (_photoLoading)
+                        const Positioned.fill(
+                          child: CircularProgressIndicator(strokeWidth: 3, color: ZuTheme.accent),
+                        ),
+                      Positioned(
+                        bottom: 0, right: 0,
+                        child: Container(
+                          width: 26, height: 26,
+                          decoration: const BoxDecoration(
+                            color: ZuTheme.bgCard, shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.camera_alt, size: 14, color: ZuTheme.accent),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+
+              // Prénom / Nom
+              Row(
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: _firstNameCtrl,
+                      decoration: const InputDecoration(labelText: 'Prénom'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _lastNameCtrl,
+                      decoration: const InputDecoration(labelText: 'Nom'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+
+              // Ville
+              TextFormField(
+                controller: _cityCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Ville',
+                  prefixIcon: Icon(Icons.location_city_outlined),
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // Niveau
+              ZuCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Niveau de jeu', style: Theme.of(context).textTheme.headlineSmall),
+                    const SizedBox(height: 12),
+                    ZuLevelSelector(
+                      initialLevel: _level,
+                      onChanged: (l) => setState(() => _level = l),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+
+              // Licence FFT
+              TextFormField(
+                controller: _fftLicenseCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Numéro de licence FFT (optionnel)',
+                  prefixIcon: Icon(Icons.card_membership_outlined),
+                ),
+              ),
+              const SizedBox(height: 14),
+
+              // Classement FFT
+              TextFormField(
+                controller: _fftRankCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Classement FFT (ex: P25, P100…)',
+                  prefixIcon: Icon(Icons.emoji_events_outlined),
+                ),
+              ),
+              const SizedBox(height: 28),
+
+              ZuButton(
+                label: 'Sauvegarder',
+                loading: _loading,
+                onPressed: () => _save(user.id),
+              ),
+              const SizedBox(height: 40),
+            ],
+          ),
+        );
+      },
+    );
   }
 }
 
@@ -714,22 +1103,27 @@ class CreditsScreen extends ConsumerStatefulWidget {
 
 class _CreditsScreenState extends ConsumerState<CreditsScreen> {
   String? _loadingPack;
+  StreamSubscription<String>? _iapErrorSub;
 
   @override
-  void initState() {
-    super.initState();
-    // Écoute les erreurs IAP (mobile) et les affiche en snackbar
-    if (!kIsWeb) {
-      ref.listenManual(iapServiceProvider, (_, service) {
-        service.purchaseErrors.listen((error) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(error)),
-            );
-          }
-        });
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!kIsWeb && _iapErrorSub == null) {
+      _iapErrorSub = ref.read(iapServiceProvider).purchaseErrors.listen((error) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(error)),
+          );
+          setState(() => _loadingPack = null);
+        }
       });
     }
+  }
+
+  @override
+  void dispose() {
+    _iapErrorSub?.cancel();
+    super.dispose();
   }
 
   // ── Achat mobile via Apple IAP / Google Play ──────────────────────
