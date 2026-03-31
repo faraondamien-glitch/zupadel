@@ -543,7 +543,7 @@ class PaymentService {
     await Stripe.instance.initPaymentSheet(
       paymentSheetParameters: SetupPaymentSheetParameters(
         paymentIntentClientSecret: clientSecret,
-        ephemeralKeySecret:        ephemeralKey,
+        customerEphemeralKeySecret: ephemeralKey,
         customerId:                customerId,
         merchantDisplayName:       'Zupadel',
         style:                     ThemeMode.dark,

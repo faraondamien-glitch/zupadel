@@ -8,6 +8,7 @@ import '../theme/zu_theme.dart';
 import '../models/models.dart';
 import '../widgets/widgets.dart';
 import '../services/services.dart';
+import 'package:flutter_stripe/flutter_stripe.dart';
 
 // ══════════════════════════════════════════════
 //  TOURNOIS
