@@ -1150,8 +1150,7 @@ class _OrganizerMenuSheet extends StatelessWidget {
           const SizedBox(height: 16),
           _MenuItem(icon: '✅', label: 'Valider le match', onTap: () {
             Navigator.pop(context);
-            ref.read(matchServiceProvider).finishMatch(matchId: match.id)
-                .catchError((e) => debugPrint('finishMatch error: $e'));
+            context.push('/matches/${match.id}/finish');
           }),
           _MenuItem(icon: '🔗', label: 'Partager le match', onTap: () {
             Navigator.pop(context);
