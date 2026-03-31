@@ -10,6 +10,7 @@ import '../screens/match_screens.dart';
 import '../screens/other_screens.dart';
 import '../services/services.dart';
 import '../theme/zu_theme.dart';
+import '../widgets/widgets.dart';
 
 Future<void> _saveFcmToken(String uid) async {
   final token = await FirebaseMessaging.instance.getToken();
@@ -19,8 +20,6 @@ Future<void> _saveFcmToken(String uid) async {
     });
   }
 }
-import '../widgets/widgets.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 
 // ══════════════════════════════════════════════
 //  ROUTER
