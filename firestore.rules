@@ -63,5 +63,28 @@ service cloud.firestore {
       allow read: if isOwner(uid);
       allow write: if false; // Gérés uniquement par les Cloud Functions
     }
+
+    // ── Clubs partenaires ────────────────────────────────────
+    match /clubs/{clubId} {
+      allow read: if isAuth();
+      allow write: if false; // Gérés par les admins uniquement
+
+      match /courts/{courtId} {
+        allow read: if isAuth();
+        allow write: if false;
+      }
+    }
+
+    // ── Réservations terrains ────────────────────────────────
+    match /reservations/{resId} {
+      allow read: if isAuth() && request.auth.uid == resource.data.userId;
+      // Création et mise à jour uniquement via Cloud Function (bookCourtSlot)
+      allow write: if false;
+    }
+
+    // ── Receipts IAP (idempotence) ───────────────────────────
+    match /iapReceipts/{receiptId} {
+      allow read, write: if false; // Cloud Functions uniquement
+    }
   }
 }

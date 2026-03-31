@@ -673,6 +673,98 @@ export const adminUpdateCoachStatus = onCall(
 );
 
 // ══════════════════════════════════════════════
+//  RÉSERVATION TERRAIN — BOOKING ATOMIQUE
+// ══════════════════════════════════════════════
+
+export const bookCourtSlot = onCall(
+  {region: "europe-west3"},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Non authentifié");
+
+    const {clubId, clubName, courtId, courtName, startTime, durationMinutes, priceCredits} =
+      request.data as {
+        clubId: string; clubName: string;
+        courtId: string; courtName: string;
+        startTime: string;
+        durationMinutes: number;
+        priceCredits: number;
+      };
+
+    const db  = getDb();
+    const uid = request.auth.uid;
+
+    const start  = new Date(startTime);
+    const end    = new Date(start.getTime() + durationMinutes * 60 * 1000);
+
+    const reservationId = await db.runTransaction(async (tx) => {
+      // ── Vérification de conflit ──────────────────────────────
+      const conflictSnap = await db.collection("reservations")
+        .where("courtId", "==", courtId)
+        .where("status", "==", "confirmed")
+        .where("startTime", "<", admin.firestore.Timestamp.fromDate(end))
+        .get();
+
+      const hasConflict = conflictSnap.docs.some((doc) => {
+        const data = doc.data();
+        const existingEnd = new Date(
+          data.startTime.toDate().getTime() + data.durationMinutes * 60 * 1000
+        );
+        return existingEnd > start;
+      });
+
+      if (hasConflict) {
+        throw new HttpsError("already-exists", "Ce créneau est déjà réservé");
+      }
+
+      // ── Vérification des crédits ─────────────────────────────
+      const userRef = db.collection("users").doc(uid);
+      const userDoc = await tx.get(userRef);
+      const credits = userDoc.data()?.credits as number ?? 0;
+
+      if (credits < priceCredits) {
+        throw new HttpsError("failed-precondition", "Crédits insuffisants");
+      }
+
+      // ── Débit et création de la réservation ──────────────────
+      const resRef = db.collection("reservations").doc();
+      tx.set(resRef, {
+        userId:          uid,
+        clubId, clubName, courtId, courtName,
+        startTime:       admin.firestore.Timestamp.fromDate(start),
+        durationMinutes,
+        priceCredits,
+        status:          "confirmed",
+        matchId:         null,
+        createdAt:       admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      tx.update(userRef, {credits: admin.firestore.FieldValue.increment(-priceCredits)});
+
+      tx.set(db.collection("creditTransactions").doc(), {
+        userId:        uid,
+        type:          "courtBooking",
+        amount:        -priceCredits,
+        balanceBefore: credits,
+        balanceAfter:  credits - priceCredits,
+        refId:         resRef.id,
+        description:   `Réservation ${courtName} @ ${clubName}`,
+        createdAt:     admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      return resRef.id;
+    });
+
+    // Notification de confirmation
+    await sendNotification(uid, {
+      title: "Terrain réservé ! 🎾",
+      body:  `${courtName} @ ${clubName} — ${new Date(startTime).toLocaleTimeString("fr-FR", {hour: "2-digit", minute: "2-digit"})}`,
+    });
+
+    return {reservationId};
+  }
+);
+
+// ══════════════════════════════════════════════
 //  NOTIFICATIONS MATCHS — ACCEPT / REFUSE
 // ══════════════════════════════════════════════
 

@@ -12,6 +12,7 @@ import 'package:intl/intl.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:path_provider/path_provider.dart';
@@ -1935,4 +1936,772 @@ class _NotifRow extends StatelessWidget {
     activeColor: ZuTheme.accent,
     contentPadding: EdgeInsets.zero,
   );
+}
+
+// ══════════════════════════════════════════════
+//  TERRAINS — LISTE DES CLUBS PARTENAIRES
+// ══════════════════════════════════════════════
+
+class ClubListScreen extends ConsumerWidget {
+  const ClubListScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final clubsAsync = ref.watch(clubsProvider);
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Clubs partenaires')),
+      body: clubsAsync.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error:   (e, _) => Center(child: Text('$e')),
+        data: (clubs) {
+          if (clubs.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.sports_tennis_rounded, size: 48, color: ZuTheme.textSecondary),
+                  const SizedBox(height: 12),
+                  Text('Aucun club partenaire', style: Theme.of(context).textTheme.bodyMedium),
+                ],
+              ),
+            );
+          }
+          return ListView.separated(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+            itemCount: clubs.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 12),
+            itemBuilder: (_, i) => _ClubCard(club: clubs[i]),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ClubCard extends StatelessWidget {
+  final ZuClub club;
+  const _ClubCard({required this.club});
+
+  @override
+  Widget build(BuildContext context) {
+    return ZuCard(
+      onTap: () => context.push('/clubs/${club.id}'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 44, height: 44,
+                decoration: BoxDecoration(
+                  color: ZuTheme.accent.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.sports_tennis_rounded, color: ZuTheme.accent, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(club.name, style: Theme.of(context).textTheme.headlineSmall),
+                    Text('📍 ${club.city}', style: Theme.of(context).textTheme.bodySmall),
+                  ],
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    '${club.pricePerSlotCredits} crédits',
+                    style: GoogleFonts.syne(
+                      fontSize: 13, fontWeight: FontWeight.w700, color: ZuTheme.accent,
+                    ),
+                  ),
+                  Text(
+                    '/ ${club.slotDurationMinutes} min',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
+            ],
+          ),
+          if (club.amenities.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 6, runSpacing: 6,
+              children: club.amenities
+                  .map((a) => ZuTag(a, style: ZuTagStyle.neutral))
+                  .toList(),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════
+//  TERRAINS — DÉTAIL CLUB + COURTS
+// ══════════════════════════════════════════════
+
+class ClubDetailScreen extends ConsumerWidget {
+  final String clubId;
+  const ClubDetailScreen({super.key, required this.clubId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final clubAsync   = ref.watch(clubDetailProvider(clubId));
+    final courtsAsync = ref.watch(clubCourtsProvider(clubId));
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Club')),
+      body: clubAsync.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error:   (e, _) => Center(child: Text('$e')),
+        data: (club) {
+          if (club == null) return const Center(child: Text('Club introuvable'));
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+            children: [
+              // Infos club
+              ZuCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(club.name, style: Theme.of(context).textTheme.headlineLarge),
+                    const SizedBox(height: 4),
+                    Text('📍 ${club.address}, ${club.city}',
+                        style: Theme.of(context).textTheme.bodySmall),
+                    if (club.phoneNumber != null) ...[
+                      const SizedBox(height: 4),
+                      Text('📞 ${club.phoneNumber}',
+                          style: Theme.of(context).textTheme.bodySmall),
+                    ],
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        ZuTag('${club.pricePerSlotCredits} crédits / ${club.slotDurationMinutes} min',
+                            style: ZuTagStyle.green),
+                        if (club.amenities.isNotEmpty) ...[
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Wrap(
+                              spacing: 6, runSpacing: 6,
+                              children: club.amenities
+                                  .map((a) => ZuTag(a, style: ZuTagStyle.neutral))
+                                  .toList(),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              // Horaires
+              if (club.openingHours.isNotEmpty) ...[
+                ZuSectionTitle('Horaires'),
+                const SizedBox(height: 8),
+                ZuCard(
+                  child: Column(
+                    children: _buildOpeningHours(context, club.openingHours),
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+              // Courts
+              ZuSectionTitle('Terrains disponibles'),
+              const SizedBox(height: 8),
+              courtsAsync.when(
+                loading: () => const ZuShimmerCard(),
+                error:   (e, _) => Text('$e'),
+                data: (courts) {
+                  if (courts.isEmpty) {
+                    return ZuCard(
+                      child: Text('Aucun terrain disponible',
+                          style: Theme.of(context).textTheme.bodySmall),
+                    );
+                  }
+                  return Column(
+                    children: courts.map((court) => Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: ZuCard(
+                        onTap: () => context.push('/clubs/${club.id}/courts/${court.id}'),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 40, height: 40,
+                              decoration: BoxDecoration(
+                                color: ZuTheme.bgSurface,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Icon(
+                                court.isIndoor
+                                    ? Icons.house_rounded
+                                    : Icons.wb_sunny_rounded,
+                                color: ZuTheme.accent, size: 20,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(court.name,
+                                      style: Theme.of(context).textTheme.headlineSmall),
+                                  Text(
+                                    '${court.surface} · ${court.isIndoor ? "Couvert" : "Extérieur"}',
+                                    style: Theme.of(context).textTheme.bodySmall,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const Icon(Icons.chevron_right_rounded,
+                                color: ZuTheme.textSecondary),
+                          ],
+                        ),
+                      ),
+                    )).toList(),
+                  );
+                },
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  static List<Widget> _buildOpeningHours(
+      BuildContext context, Map<String, String> hours) {
+    const days = [
+      ('monday', 'Lundi'), ('tuesday', 'Mardi'), ('wednesday', 'Mercredi'),
+      ('thursday', 'Jeudi'), ('friday', 'Vendredi'),
+      ('saturday', 'Samedi'), ('sunday', 'Dimanche'),
+    ];
+    return days.map(((key, label)) {
+      final h = hours[key];
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 90,
+              child: Text(label, style: Theme.of(context).textTheme.bodyMedium),
+            ),
+            Text(
+              h?.isNotEmpty == true ? h! : 'Fermé',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: h?.isNotEmpty == true
+                    ? ZuTheme.textPrimary
+                    : ZuTheme.textSecondary,
+              ),
+            ),
+          ],
+        ),
+      );
+    }).toList();
+  }
+}
+
+// ══════════════════════════════════════════════
+//  TERRAINS — CRÉNEAUX D'UN COURT
+// ══════════════════════════════════════════════
+
+class CourtSlotsScreen extends ConsumerStatefulWidget {
+  final String clubId;
+  final String courtId;
+  const CourtSlotsScreen({
+    super.key,
+    required this.clubId,
+    required this.courtId,
+  });
+
+  @override
+  ConsumerState<CourtSlotsScreen> createState() => _CourtSlotsScreenState();
+}
+
+class _CourtSlotsScreenState extends ConsumerState<CourtSlotsScreen> {
+  DateTime _selectedDay = DateTime.now();
+  List<DateTime> _bookedSlots = [];
+  bool _loadingSlots = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBooked();
+  }
+
+  Future<void> _loadBooked() async {
+    setState(() => _loadingSlots = true);
+    try {
+      final slots = await ref.read(reservationServiceProvider).bookedSlots(
+        courtId: widget.courtId,
+        day: _selectedDay,
+      );
+      if (mounted) setState(() => _bookedSlots = slots);
+    } finally {
+      if (mounted) setState(() => _loadingSlots = false);
+    }
+  }
+
+  void _changeDay(DateTime day) {
+    setState(() {
+      _selectedDay = day;
+      _bookedSlots = [];
+    });
+    _loadBooked();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final clubAsync   = ref.watch(clubDetailProvider(widget.clubId));
+    final courtsAsync = ref.watch(clubCourtsProvider(widget.clubId));
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Choisir un créneau')),
+      body: clubAsync.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error:   (e, _) => Center(child: Text('$e')),
+        data: (club) {
+          if (club == null) return const Center(child: Text('Club introuvable'));
+          final court = courtsAsync.valueOrNull
+              ?.firstWhere((c) => c.id == widget.courtId,
+                  orElse: () => courtsAsync.valueOrNull!.first);
+
+          final allSlots     = club.slotsForDay(_selectedDay);
+          final bookedSet    = _bookedSlots.map((d) => d.toIso8601String()).toSet();
+          final now          = DateTime.now();
+          final availableSlots = allSlots
+              .where((s) => s.isAfter(now) && !bookedSet.contains(s.toIso8601String()))
+              .toList();
+
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+            children: [
+              // Infos terrain
+              if (court != null)
+                ZuCard(
+                  child: Row(
+                    children: [
+                      Icon(
+                        court.isIndoor ? Icons.house_rounded : Icons.wb_sunny_rounded,
+                        color: ZuTheme.accent,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(court.name,
+                                style: Theme.of(context).textTheme.headlineSmall),
+                            Text(
+                              '${court.surface} · ${court.isIndoor ? "Couvert" : "Extérieur"} · '
+                              '${club.slotDurationMinutes} min · ${club.pricePerSlotCredits} crédits',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: 16),
+              // Sélecteur de jour
+              ZuSectionTitle('Choisir un jour'),
+              const SizedBox(height: 8),
+              _DayPicker(
+                selected: _selectedDay,
+                onChanged: _changeDay,
+              ),
+              const SizedBox(height: 16),
+              // Créneaux
+              ZuSectionTitle('Créneaux disponibles'),
+              const SizedBox(height: 8),
+              if (_loadingSlots)
+                const Center(child: CircularProgressIndicator())
+              else if (allSlots.isEmpty)
+                ZuCard(
+                  child: Text('Club fermé ce jour',
+                      style: Theme.of(context).textTheme.bodySmall),
+                )
+              else if (availableSlots.isEmpty)
+                ZuCard(
+                  child: Text('Plus de créneaux disponibles',
+                      style: Theme.of(context).textTheme.bodySmall),
+                )
+              else
+                GridView.count(
+                  crossAxisCount: 3,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  mainAxisSpacing: 8, crossAxisSpacing: 8,
+                  childAspectRatio: 2.2,
+                  children: availableSlots.map((slot) => _SlotChip(
+                    slot: slot,
+                    onTap: () => context.push(
+                      '/clubs/${widget.clubId}/courts/${widget.courtId}/book',
+                      extra: {
+                        'slot': slot,
+                        'club': club,
+                        'court': court,
+                      },
+                    ),
+                  )).toList(),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _DayPicker extends StatelessWidget {
+  final DateTime selected;
+  final ValueChanged<DateTime> onChanged;
+  const _DayPicker({required this.selected, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final days = List.generate(14, (i) => DateTime.now().add(Duration(days: i)));
+    return SizedBox(
+      height: 64,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: days.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (_, i) {
+          final day     = days[i];
+          final isToday = i == 0;
+          final isSel   = day.year == selected.year &&
+              day.month == selected.month &&
+              day.day == selected.day;
+          return GestureDetector(
+            onTap: () => onChanged(day),
+            child: Container(
+              width: 52,
+              decoration: BoxDecoration(
+                color: isSel ? ZuTheme.accent : ZuTheme.bgCard,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: isSel ? ZuTheme.accent : ZuTheme.borderColor,
+                ),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    DateFormat('d', 'fr_FR').format(day),
+                    style: GoogleFonts.syne(
+                      fontSize: 16, fontWeight: FontWeight.w800,
+                      color: isSel ? ZuTheme.bgPrimary : ZuTheme.textPrimary,
+                    ),
+                  ),
+                  Text(
+                    isToday ? 'Auj.' : DateFormat('EEE', 'fr_FR').format(day),
+                    style: GoogleFonts.dmSans(
+                      fontSize: 10,
+                      color: isSel ? ZuTheme.bgPrimary : ZuTheme.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _SlotChip extends StatelessWidget {
+  final DateTime slot;
+  final VoidCallback onTap;
+  const _SlotChip({required this.slot, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        decoration: BoxDecoration(
+          color: ZuTheme.accent.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: ZuTheme.accent.withOpacity(0.4)),
+        ),
+        child: Center(
+          child: Text(
+            DateFormat('HH:mm').format(slot),
+            style: GoogleFonts.syne(
+              fontSize: 14, fontWeight: FontWeight.w700, color: ZuTheme.accent,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════
+//  TERRAINS — CONFIRMATION DE RÉSERVATION
+// ══════════════════════════════════════════════
+
+class BookSlotScreen extends ConsumerStatefulWidget {
+  final String clubId;
+  final String courtId;
+  final DateTime slot;
+  final ZuClub club;
+  final ZuCourt court;
+
+  const BookSlotScreen({
+    super.key,
+    required this.clubId,
+    required this.courtId,
+    required this.slot,
+    required this.club,
+    required this.court,
+  });
+
+  @override
+  ConsumerState<BookSlotScreen> createState() => _BookSlotScreenState();
+}
+
+class _BookSlotScreenState extends ConsumerState<BookSlotScreen> {
+  bool _loading = false;
+
+  Future<void> _confirm() async {
+    final user = ref.read(currentUserProvider).valueOrNull;
+    if (user == null) return;
+    if (user.credits < widget.club.pricePerSlotCredits) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Crédits insuffisants. Achète des crédits dans ton profil.')),
+      );
+      return;
+    }
+    setState(() => _loading = true);
+    try {
+      final resId = await ref.read(reservationServiceProvider).bookSlot(
+        clubId:          widget.club.id,
+        clubName:        widget.club.name,
+        courtId:         widget.court.id,
+        courtName:       widget.court.name,
+        startTime:       widget.slot,
+        durationMinutes: widget.club.slotDurationMinutes,
+        priceCredits:    widget.club.pricePerSlotCredits,
+      );
+      if (mounted) {
+        context.go('/clubs/${widget.clubId}/reservations/$resId');
+      }
+    } on FirebaseFunctionsException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message ?? 'Erreur de réservation')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final user = ref.watch(currentUserProvider).valueOrNull;
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Confirmer la réservation')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          ZuCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Récapitulatif',
+                    style: Theme.of(context).textTheme.headlineMedium),
+                const SizedBox(height: 16),
+                _InfoRow(icon: Icons.sports_tennis_rounded,
+                    label: widget.club.name),
+                const SizedBox(height: 8),
+                _InfoRow(icon: Icons.grid_view_rounded,
+                    label: widget.court.name),
+                const SizedBox(height: 8),
+                _InfoRow(
+                  icon: Icons.calendar_today_rounded,
+                  label: DateFormat('EEEE d MMMM yyyy', 'fr_FR').format(widget.slot),
+                ),
+                const SizedBox(height: 8),
+                _InfoRow(
+                  icon: Icons.access_time_rounded,
+                  label:
+                    '${DateFormat('HH:mm').format(widget.slot)} → '
+                    '${DateFormat('HH:mm').format(widget.slot.add(Duration(minutes: widget.club.slotDurationMinutes)))}',
+                ),
+                const SizedBox(height: 8),
+                _InfoRow(
+                  icon: Icons.toll_rounded,
+                  label: '${widget.club.pricePerSlotCredits} crédits',
+                  accent: true,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          if (user != null)
+            ZuCard(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Ton solde actuel',
+                      style: Theme.of(context).textTheme.bodyMedium),
+                  Text(
+                    '${user.credits} crédits',
+                    style: GoogleFonts.syne(
+                      fontWeight: FontWeight.w700,
+                      color: user.credits >= widget.club.pricePerSlotCredits
+                          ? ZuTheme.accent
+                          : ZuTheme.error,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          const SizedBox(height: 24),
+          ZuButton(
+            label: 'Réserver — ${widget.club.pricePerSlotCredits} crédits',
+            loading: _loading,
+            onPressed: _confirm,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool accent;
+  const _InfoRow({required this.icon, required this.label, this.accent = false});
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      Icon(icon, size: 18,
+          color: accent ? ZuTheme.accent : ZuTheme.textSecondary),
+      const SizedBox(width: 10),
+      Expanded(
+        child: Text(
+          label,
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            color: accent ? ZuTheme.accent : null,
+            fontWeight: accent ? FontWeight.w700 : null,
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
+// ══════════════════════════════════════════════
+//  TERRAINS — CONFIRMATION APRÈS RÉSERVATION
+// ══════════════════════════════════════════════
+
+class ReservationConfirmScreen extends ConsumerWidget {
+  final String reservationId;
+  const ReservationConfirmScreen({super.key, required this.reservationId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final resAsync = ref.watch(myReservationsProvider);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Réservation confirmée'),
+        automaticallyImplyLeading: false,
+      ),
+      body: resAsync.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error:   (e, _) => Center(child: Text('$e')),
+        data: (list) {
+          final res = list.where((r) => r.id == reservationId).firstOrNull;
+          if (res == null) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          return ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              const SizedBox(height: 24),
+              Center(
+                child: Container(
+                  width: 72, height: 72,
+                  decoration: BoxDecoration(
+                    color: ZuTheme.accent.withOpacity(0.15),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.check_rounded,
+                      color: ZuTheme.accent, size: 40),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Center(
+                child: Text(
+                  'Terrain réservé !',
+                  style: GoogleFonts.syne(
+                    fontSize: 22, fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+              ZuCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _InfoRow(icon: Icons.sports_tennis_rounded, label: res.clubName),
+                    const SizedBox(height: 8),
+                    _InfoRow(icon: Icons.grid_view_rounded, label: res.courtName),
+                    const SizedBox(height: 8),
+                    _InfoRow(
+                      icon: Icons.calendar_today_rounded,
+                      label: DateFormat('EEEE d MMMM yyyy', 'fr_FR').format(res.startTime),
+                    ),
+                    const SizedBox(height: 8),
+                    _InfoRow(
+                      icon: Icons.access_time_rounded,
+                      label: '${DateFormat('HH:mm').format(res.startTime)} → '
+                          '${DateFormat('HH:mm').format(res.endTime)}',
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              ZuButton(
+                label: 'Créer un match sur ce créneau',
+                outlined: true,
+                onPressed: () => context.go(
+                  '/matches/create',
+                  extra: {'reservationId': res.id, 'club': res.clubName},
+                ),
+              ),
+              const SizedBox(height: 12),
+              ZuButton(
+                label: 'Retour aux clubs',
+                onPressed: () => context.go('/clubs'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
 }

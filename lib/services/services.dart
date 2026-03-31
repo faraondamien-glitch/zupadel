@@ -803,6 +803,147 @@ class PaymentService {
 final paymentServiceProvider = Provider<PaymentService>((ref) => PaymentService());
 
 // ══════════════════════════════════════════════
+//  CLUB SERVICE
+// ══════════════════════════════════════════════
+
+class ClubService {
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+
+  Stream<List<ZuClub>> watchClubs() => _db.collection('clubs')
+      .where('isActive', isEqualTo: true)
+      .orderBy('name')
+      .snapshots()
+      .map((s) => s.docs.map(ZuClub.fromFirestore).toList());
+
+  Stream<ZuClub?> watchClub(String id) => _db.collection('clubs')
+      .doc(id)
+      .snapshots()
+      .map((d) => d.exists ? ZuClub.fromFirestore(d) : null);
+
+  Stream<List<ZuCourt>> watchCourts(String clubId) => _db
+      .collection('clubs')
+      .doc(clubId)
+      .collection('courts')
+      .where('isActive', isEqualTo: true)
+      .orderBy('name')
+      .snapshots()
+      .map((s) => s.docs.map(ZuCourt.fromFirestore).toList());
+}
+
+final clubServiceProvider    = Provider<ClubService>((ref) => ClubService());
+
+final clubsProvider = StreamProvider<List<ZuClub>>((ref) =>
+    ref.watch(clubServiceProvider).watchClubs());
+
+final clubDetailProvider = StreamProvider.family<ZuClub?, String>((ref, id) =>
+    ref.watch(clubServiceProvider).watchClub(id));
+
+final clubCourtsProvider = StreamProvider.family<List<ZuCourt>, String>((ref, clubId) =>
+    ref.watch(clubServiceProvider).watchCourts(clubId));
+
+// ══════════════════════════════════════════════
+//  RESERVATION SERVICE
+// ══════════════════════════════════════════════
+
+class ReservationService {
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final _functions = FirebaseFunctions.instanceFor(region: 'europe-west3');
+
+  String get _uid => _auth.currentUser!.uid;
+
+  Stream<List<ZuReservation>> watchMyReservations() => _db
+      .collection('reservations')
+      .where('userId', isEqualTo: _uid)
+      .where('status', isEqualTo: ReservationStatus.confirmed.name)
+      .orderBy('startTime')
+      .snapshots()
+      .map((s) => s.docs
+          .map(ZuReservation.fromFirestore)
+          .where((r) => r.startTime.isAfter(DateTime.now()))
+          .toList());
+
+  /// Retourne les startTime déjà réservés pour un court sur un jour donné.
+  Future<List<DateTime>> bookedSlots({
+    required String courtId,
+    required DateTime day,
+  }) async {
+    final start = DateTime(day.year, day.month, day.day);
+    final end   = start.add(const Duration(days: 1));
+    final snap  = await _db.collection('reservations')
+        .where('courtId', isEqualTo: courtId)
+        .where('status', isEqualTo: ReservationStatus.confirmed.name)
+        .where('startTime', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
+        .where('startTime', isLessThan: Timestamp.fromDate(end))
+        .get();
+    return snap.docs
+        .map(ZuReservation.fromFirestore)
+        .map((r) => r.startTime)
+        .toList();
+  }
+
+  /// Réserve atomiquement un créneau via Cloud Function (détection de conflit).
+  Future<String> bookSlot({
+    required String clubId,
+    required String clubName,
+    required String courtId,
+    required String courtName,
+    required DateTime startTime,
+    required int durationMinutes,
+    required int priceCredits,
+  }) async {
+    final result = await _functions.httpsCallable('bookCourtSlot').call({
+      'clubId':          clubId,
+      'clubName':        clubName,
+      'courtId':         courtId,
+      'courtName':       courtName,
+      'startTime':       startTime.toIso8601String(),
+      'durationMinutes': durationMinutes,
+      'priceCredits':    priceCredits,
+    });
+    final data = Map<String, dynamic>.from(result.data as Map);
+    return data['reservationId'] as String;
+  }
+
+  /// Annule une réservation et rembourse les crédits.
+  Future<void> cancelReservation(String reservationId) async {
+    final resRef  = _db.collection('reservations').doc(reservationId);
+    final userRef = _db.collection('users').doc(_uid);
+
+    await _db.runTransaction((tx) async {
+      final resDoc  = await tx.get(resRef);
+      final userDoc = await tx.get(userRef);
+      final res     = ZuReservation.fromFirestore(resDoc);
+      if (res.userId != _uid) throw Exception('Non autorisé');
+      if (res.status != ReservationStatus.confirmed) {
+        throw Exception('Réservation non annulable');
+      }
+      final credits = userDoc.data()?['credits'] as int? ?? 0;
+      tx.update(resRef, {'status': ReservationStatus.cancelled.name});
+      tx.update(userRef, {'credits': FieldValue.increment(res.priceCredits)});
+      tx.set(_db.collection('creditTransactions').doc(), {
+        'userId':        _uid,
+        'type':          CreditOpType.courtBookingRefund.name,
+        'amount':        res.priceCredits,
+        'balanceBefore': credits,
+        'balanceAfter':  credits + res.priceCredits,
+        'refId':         reservationId,
+        'description':   'Annulation terrain — ${res.courtName} @ ${res.clubName}',
+        'createdAt':     FieldValue.serverTimestamp(),
+      });
+    });
+  }
+}
+
+final reservationServiceProvider = Provider<ReservationService>((ref) => ReservationService());
+
+final myReservationsProvider = StreamProvider<List<ZuReservation>>((ref) {
+  final auth = ref.watch(authStateProvider).valueOrNull;
+  if (auth == null) return Stream.value([]);
+  return ref.watch(reservationServiceProvider).watchMyReservations();
+});
+
+// ══════════════════════════════════════════════
 //  USER STATS
 // ══════════════════════════════════════════════
 
