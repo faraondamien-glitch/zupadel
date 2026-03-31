@@ -2,10 +2,10 @@ import { useState, useEffect, useCallback } from "react";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import {
   collection, query, orderBy, limit,
-  onSnapshot, doc, updateDoc, addDoc,
-  serverTimestamp, where, getDocs
+  onSnapshot, where, getDocs
 } from "firebase/firestore";
-import { auth, db } from "./firebase";
+import { httpsCallable } from "firebase/functions";
+import { auth, db, functions } from "./firebase";
 import Login from "./Login";
 
 // ─── Tokens ─────────────────────────────────
@@ -163,22 +163,14 @@ function Users() {
   );
 
   const toggleBan = async (u) => {
-    await updateDoc(doc(db, "users", u.id), { status: u.status === "banned" ? "active" : "banned" });
+    const fn = httpsCallable(functions, "adminBanUser");
+    await fn({ uid: u.id, ban: u.status !== "banned" });
   };
 
   const addCredits = async () => {
     if (!selected || !amount) return;
-    const cur = selected.credits || 0;
-    await updateDoc(doc(db, "users", selected.id), { credits: cur + parseInt(amount) });
-    await addDoc(collection(db, "creditTransactions"), {
-      userId: selected.id,
-      type: "concours",
-      amount: parseInt(amount),
-      balanceBefore: cur,
-      balanceAfter: cur + parseInt(amount),
-      description: "Ajout manuel admin",
-      createdAt: serverTimestamp(),
-    });
+    const fn = httpsCallable(functions, "adminAddCredits");
+    await fn({ uid: selected.id, amount: parseInt(amount), description: "Ajout manuel admin" });
     setSelected(null);
     setAmount(0);
   };
@@ -258,7 +250,8 @@ function Tournaments() {
   }, []);
 
   const updateStatus = async (id, status) => {
-    await updateDoc(doc(db, "tournaments", id), { status });
+    const fn = httpsCallable(functions, "adminUpdateTournamentStatus");
+    await fn({ tournamentId: id, status });
   };
 
   if (loading) return <Loader />;
@@ -324,7 +317,8 @@ function Registrations() {
   }, []);
 
   const updateStatus = async (id, status) => {
-    await updateDoc(doc(db, "tournamentRegistrations", id), { status });
+    const fn = httpsCallable(functions, "adminUpdateRegistrationStatus");
+    await fn({ registrationId: id, status });
   };
 
   const filters = ["pending", "accepted", "refused", "all"];
@@ -397,7 +391,8 @@ function Coaches() {
   }, []);
 
   const updateStatus = async (id, status) => {
-    await updateDoc(doc(db, "coaches", id), { isActive: status === "active" });
+    const fn = httpsCallable(functions, "adminUpdateCoachStatus");
+    await fn({ coachId: id, isActive: status === "active" });
   };
 
   if (loading) return <Loader />;
@@ -461,19 +456,9 @@ function Concours() {
   const send = async () => {
     if (!selected || !reason || !amount) return;
     setLoading(true);
-    const user = users.find(u => u.id === selected);
-    const cur  = user?.credits || 0;
     try {
-      await updateDoc(doc(db, "users", selected), { credits: cur + parseInt(amount) });
-      await addDoc(collection(db, "creditTransactions"), {
-        userId: selected,
-        type: "concours",
-        amount: parseInt(amount),
-        balanceBefore: cur,
-        balanceAfter: cur + parseInt(amount),
-        description: reason,
-        createdAt: serverTimestamp(),
-      });
+      const fn = httpsCallable(functions, "adminAddCredits");
+      await fn({ uid: selected, amount: parseInt(amount), description: reason });
       setSelected("");
       setReason("");
       setAmount(10);
@@ -578,24 +563,33 @@ const NAV = [
 
 export default function App() {
   const [user, setUser]       = useState(undefined);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [section, setSection] = useState("dashboard");
   const [counts, setCounts]   = useState({});
 
   useEffect(() => {
-    return onAuthStateChanged(auth, u => setUser(u));
+    return onAuthStateChanged(auth, async (u) => {
+      setUser(u);
+      if (u) {
+        const tokenResult = await u.getIdTokenResult();
+        setIsAdmin(!!tokenResult.claims.admin);
+      } else {
+        setIsAdmin(false);
+      }
+    });
   }, []);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !isAdmin) return;
     const unsubs = [];
     unsubs.push(onSnapshot(query(collection(db, "tournaments"), where("status", "==", "pending")), s => setCounts(p => ({ ...p, tournaments: s.size }))));
     unsubs.push(onSnapshot(query(collection(db, "tournamentRegistrations"), where("status", "==", "pending")), s => setCounts(p => ({ ...p, registrations: s.size }))));
     unsubs.push(onSnapshot(query(collection(db, "coaches"), where("isActive", "==", false)), s => setCounts(p => ({ ...p, coaches: s.size }))));
     return () => unsubs.forEach(u => u());
-  }, [user]);
+  }, [user, isAdmin]);
 
   if (user === undefined) return <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", color: C.accent, fontFamily: font.syne, fontSize: 20, fontWeight: 800 }}>ZUPADEL</div>;
-  if (!user) return <Login />;
+  if (!user || !isAdmin) return <Login />;
 
   const SCREENS = { dashboard: Dashboard, users: Users, tournaments: Tournaments, registrations: Registrations, coaches: Coaches, concours: Concours };
   const Screen = SCREENS[section];

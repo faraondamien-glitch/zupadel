@@ -203,6 +203,7 @@ class ZuMatch {
     'status':          status.name,
     'playerIds':       playerIds,
     'pendingIds':      pendingIds,
+    'bettorIds':       bettorIds,
     'note':            note,
     'score':           score,
     'avgRating':       avgRating,
