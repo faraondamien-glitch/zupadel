@@ -661,6 +661,44 @@ export const adminUpdateCoachStatus = onCall(
   }
 );
 
+// ══════════════════════════════════════════════
+//  NOTIFICATIONS MATCHS — ACCEPT / REFUSE
+// ══════════════════════════════════════════════
+
+export const notifyPlayerAccepted = onCall(
+  {region: "europe-west3"},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Non authentifié");
+    const {matchId, playerId} = request.data as {matchId: string; playerId: string};
+    const db = getDb();
+    const matchDoc = await db.collection("matches").doc(matchId).get();
+    const club = matchDoc.data()?.club ?? "?";
+    await sendNotification(playerId, {
+      title: "Demande acceptée ! 🎾",
+      body: `Tu es accepté dans le match à ${club}`,
+      data: {matchId},
+    });
+    return {success: true};
+  }
+);
+
+export const notifyPlayerRefused = onCall(
+  {region: "europe-west3"},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Non authentifié");
+    const {matchId, playerId} = request.data as {matchId: string; playerId: string};
+    const db = getDb();
+    const matchDoc = await db.collection("matches").doc(matchId).get();
+    const club = matchDoc.data()?.club ?? "?";
+    await sendNotification(playerId, {
+      title: "Demande refusée",
+      body: `Ta demande pour le match à ${club} a été refusée. 1 crédit remboursé.`,
+      data: {matchId},
+    });
+    return {success: true};
+  }
+);
+
 // ── Helpers ──────────────────────────────────────────────────────
 
 async function sendNotification(

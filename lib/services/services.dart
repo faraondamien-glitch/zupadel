@@ -218,6 +218,7 @@ class MatchFilter {
 class MatchService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final _functions = FirebaseFunctions.instanceFor(region: 'europe-west3');
 
   String get _uid => _auth.currentUser!.uid;
 
@@ -301,7 +302,9 @@ class MatchService {
       'pendingIds': FieldValue.arrayRemove([playerId]),
       'playerIds':  FieldValue.arrayUnion([playerId]),
     });
-    // TODO: send FCM N3
+    _functions.httpsCallable('notifyPlayerAccepted')
+        .call({'matchId': matchId, 'playerId': playerId})
+        .catchError((e) => debugPrint('[FCM] notifyPlayerAccepted: $e'));
   }
 
   Future<void> refusePlayer({required String matchId, required String playerId}) async {
@@ -326,7 +329,9 @@ class MatchService {
         'createdAt':     FieldValue.serverTimestamp(),
       });
     });
-    // TODO: send FCM N3
+    _functions.httpsCallable('notifyPlayerRefused')
+        .call({'matchId': matchId, 'playerId': playerId})
+        .catchError((e) => debugPrint('[FCM] notifyPlayerRefused: $e'));
   }
 
   Future<void> removePlayer({required String matchId, required String playerId}) async {
@@ -399,7 +404,7 @@ class MatchService {
     }
 
     await batch.commit();
-    // TODO: send FCM N4 à tous les joueurs
+    // Les notifications N4 sont envoyées par le trigger onMatchCancelled (index.ts)
   }
 
   Future<void> leaveReview({
