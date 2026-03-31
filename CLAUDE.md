@@ -136,6 +136,14 @@ dart run build_runner build --delete-conflicting-outputs
 - **Cause** : Dossiers `assets/images/`, `assets/icons/`, `assets/animations/` référencés dans pubspec.yaml mais absents
 - **Solution** : `mkdir -p assets/images assets/icons assets/animations && touch assets/**/.gitkeep`
 
+### Crash null sur `fromFirestore` (Timestamp)
+- **Cause** : `(d['createdAt'] as Timestamp).toDate()` crash si le champ est null (optimistic write Firestore avec `FieldValue.serverTimestamp()` — premier snapshot avant écriture serveur)
+- **Solution** : Toujours utiliser `(d['field'] as Timestamp?)?.toDate() ?? DateTime.now()` dans tous les modèles
+
+### Erreur Firestore sur `watchMyMatches`
+- **Cause** : `arrayContains` + `whereIn` + `orderBy` sur des champs différents nécessite un index composite Firestore non créé
+- **Solution** : Filtrer côté client — utiliser seulement `arrayContains` + `orderBy` dans la requête, puis `.where()` Dart sur les résultats
+
 ---
 
 ## À faire / Roadmap MVP

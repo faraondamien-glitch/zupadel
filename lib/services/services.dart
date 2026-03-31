@@ -372,12 +372,18 @@ class MatchService {
   }
 
   Stream<List<ZuMatch>> watchMyMatches(String uid) {
+    // Firestore n'autorise pas arrayContains + whereIn + orderBy sans index composite.
+    // On filtre uniquement par joueur et on trie/filtre côté client.
     return _db.collection('matches')
         .where('playerIds', arrayContains: uid)
-        .where('status', whereIn: [MatchStatus.open.name, MatchStatus.ongoing.name])
         .orderBy('startTime')
         .snapshots()
-        .map((s) => s.docs.map(ZuMatch.fromFirestore).toList());
+        .map((s) => s.docs
+            .map(ZuMatch.fromFirestore)
+            .where((m) =>
+                m.status == MatchStatus.open ||
+                m.status == MatchStatus.ongoing)
+            .toList());
   }
 
   Stream<List<ZuMatch>> watchFilteredMatches(MatchFilter filter) {

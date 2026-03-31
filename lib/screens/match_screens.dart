@@ -1073,14 +1073,16 @@ class _OrganizerMenuSheet extends StatelessWidget {
           const SizedBox(height: 16),
           _MenuItem(icon: '✅', label: 'Valider le match', onTap: () {
             Navigator.pop(context);
-            ref.read(matchServiceProvider).finishMatch(matchId: match.id);
+            ref.read(matchServiceProvider).finishMatch(matchId: match.id)
+                .catchError((e) => debugPrint('finishMatch error: $e'));
           }),
           _MenuItem(icon: '🔗', label: 'Partager le match', onTap: () {
             Navigator.pop(context);
           }),
           _MenuItem(icon: '❌', label: 'Annuler le match', color: ZuTheme.accentRed, onTap: () {
             Navigator.pop(context);
-            ref.read(matchServiceProvider).cancelMatch(matchId: match.id);
+            ref.read(matchServiceProvider).cancelMatch(matchId: match.id)
+                .catchError((e) => debugPrint('cancelMatch error: $e'));
           }),
         ],
       ),
