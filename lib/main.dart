@@ -7,6 +7,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'theme/zu_theme.dart';
 import 'router.dart';
@@ -48,6 +49,7 @@ void main() async {
   // Notifications push
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   await _initFcm();
+  _setupFcmHandlers();
 
   // Locale française pour les dates
   await initializeDateFormatting('fr_FR', null);
@@ -57,6 +59,54 @@ void main() async {
       child: ZupadelApp(),
     ),
   );
+}
+
+void _setupFcmHandlers() {
+  // Notification reçue quand l'app est au premier plan
+  FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+    final notification = message.notification;
+    if (notification == null) return;
+    final ctx = routerNavigatorKey.currentContext;
+    if (ctx == null) return;
+    final matchId      = message.data['matchId'];
+    final tournamentId = message.data['tournamentId'];
+    ScaffoldMessenger.of(ctx).showSnackBar(
+      SnackBar(
+        content: Text('${notification.title ?? ''}: ${notification.body ?? ''}'),
+        duration: const Duration(seconds: 4),
+        action: (matchId != null || tournamentId != null)
+            ? SnackBarAction(
+                label: 'Voir',
+                onPressed: () {
+                  if (matchId != null)      GoRouter.of(ctx).go('/matches/$matchId');
+                  if (tournamentId != null) GoRouter.of(ctx).go('/tournaments/$tournamentId');
+                },
+              )
+            : null,
+      ),
+    );
+  });
+
+  // Notification tapée quand l'app était en arrière-plan
+  FirebaseMessaging.onMessageOpenedApp.listen(_handleNotificationTap);
+
+  // App lancée depuis une notification (état terminé)
+  FirebaseMessaging.instance.getInitialMessage().then((message) {
+    if (message != null) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _handleNotificationTap(message),
+      );
+    }
+  });
+}
+
+void _handleNotificationTap(RemoteMessage message) {
+  final ctx          = routerNavigatorKey.currentContext;
+  if (ctx == null) return;
+  final matchId      = message.data['matchId'];
+  final tournamentId = message.data['tournamentId'];
+  if (matchId != null)      GoRouter.of(ctx).go('/matches/$matchId');
+  if (tournamentId != null) GoRouter.of(ctx).go('/tournaments/$tournamentId');
 }
 
 Future<void> _initFcm() async {

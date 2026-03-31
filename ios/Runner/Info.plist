@@ -33,6 +33,10 @@
 	</array>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Zupadel utilise ta localisation pour trouver des matchs près de toi (rayon 30 km).</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Zupadel utilise ta localisation pour trouver des matchs près de toi (rayon 30 km).</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 <key>UISupportedInterfaceOrientations</key>

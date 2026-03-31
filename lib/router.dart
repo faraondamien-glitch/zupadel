@@ -25,10 +25,14 @@ Future<void> _saveFcmToken(String uid) async {
 //  ROUTER
 // ══════════════════════════════════════════════
 
+/// Clé globale pour la navigation depuis les notifications FCM
+final routerNavigatorKey = GlobalKey<NavigatorState>();
+
 final routerProvider = Provider<GoRouter>((ref) {
   final auth = ref.watch(authStateProvider);
 
   return GoRouter(
+    navigatorKey: routerNavigatorKey,
     initialLocation: '/',
     redirect: (context, state) {
       final isLoggedIn = auth.valueOrNull != null;
@@ -74,6 +78,18 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/tournaments/:id/register',
         builder: (_, state) => TournamentRegisterScreen(tournamentId: state.pathParameters['id']!),
+      ),
+      GoRoute(
+        path: '/profile/share-stats',
+        builder: (_, __) => const ShareStatsScreen(),
+      ),
+      GoRoute(
+        path: '/settings/notifications',
+        builder: (_, __) => const NotificationSettingsScreen(),
+      ),
+      GoRoute(
+        path: '/coaching/:id',
+        builder: (_, state) => CoachDetailScreen(coachId: state.pathParameters['id']!),
       ),
       // Auth
       GoRoute(path: '/auth/login',    builder: (_, __) => const LoginScreen()),

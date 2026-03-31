@@ -1,5 +1,8 @@
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -7,6 +10,9 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:path_provider/path_provider.dart';
+import 'dart:io';
 import '../theme/zu_theme.dart';
 import '../models/models.dart';
 import '../widgets/widgets.dart';
@@ -268,15 +274,30 @@ class _TournamentRegisterScreenState extends ConsumerState<TournamentRegisterScr
   Future<void> _submit() async {
     setState(() => _loading = true);
     try {
-      await ref.read(tournamentServiceProvider).register(
+      final paid = await ref.read(tournamentServiceProvider).register(
         tournamentId: widget.tournamentId,
         fftLicense: _licenseController.text.trim(),
       );
       if (mounted) {
         context.pop();
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Inscription envoyée ! Tu seras notifié de la réponse.')),
+          SnackBar(
+            content: Text(paid
+                ? 'Paiement validé ! Inscription confirmée.'
+                : 'Inscription envoyée ! Tu seras notifié de la réponse.'),
+          ),
         );
+      }
+    } on StripeException catch (e) {
+      if (e.error.code == FailureCode.Canceled) return;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur paiement : ${e.error.localizedMessage ?? e.error.message}')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -572,9 +593,9 @@ class ProfileScreen extends ConsumerWidget {
 
   void _shareReferral(BuildContext context, String? code) {
     if (code == null) return;
-    // TODO: share_plus
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Code copié : $code')),
+    Share.share(
+      'Rejoins-moi sur Zupadel ! Utilise mon code $code pour recevoir 5 crédits offerts.\n\nhttps://zupadel.app',
+      subject: 'Code parrainage Zupadel',
     );
   }
 }
@@ -1107,5 +1128,364 @@ class _MenuRow extends StatelessWidget {
     ),
     trailing: trailing ?? const Icon(Icons.chevron_right, color: ZuTheme.textSecondary, size: 18),
     onTap: onTap,
+  );
+}
+
+// ══════════════════════════════════════════════
+//  PARTAGE STATS
+// ══════════════════════════════════════════════
+
+class ShareStatsScreen extends ConsumerStatefulWidget {
+  const ShareStatsScreen({super.key});
+
+  @override
+  ConsumerState<ShareStatsScreen> createState() => _ShareStatsScreenState();
+}
+
+class _ShareStatsScreenState extends ConsumerState<ShareStatsScreen> {
+  final _repaintKey = GlobalKey();
+  bool _sharing = false;
+
+  Future<void> _shareCard() async {
+    setState(() => _sharing = true);
+    try {
+      final boundary = _repaintKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+      if (boundary == null) return;
+
+      final image = await boundary.toImage(pixelRatio: 3.0);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      if (byteData == null) return;
+      final pngBytes = byteData.buffer.asUint8List();
+
+      if (kIsWeb) {
+        // Sur le web, on ne peut pas écrire de fichier — on partage via XFile en mémoire
+        await Share.shareXFiles(
+          [XFile.fromData(pngBytes, mimeType: 'image/png', name: 'zupadel_stats.png')],
+          text: 'Mes stats Zupadel 🎾',
+        );
+      } else {
+        final dir  = await getTemporaryDirectory();
+        final file = File('${dir.path}/zupadel_stats.png');
+        await file.writeAsBytes(pngBytes);
+        await Share.shareXFiles(
+          [XFile(file.path, mimeType: 'image/png')],
+          text: 'Mes stats Zupadel 🎾',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sharing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final user  = ref.watch(currentUserProvider).valueOrNull;
+    final stats = ref.watch(userStatsProvider).valueOrNull;
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Partager mes stats')),
+      body: Column(
+        children: [
+          const SizedBox(height: 24),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: RepaintBoundary(
+              key: _repaintKey,
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xFF161F14), Color(0xFF0D0F14)],
+                  ),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: ZuTheme.accent.withOpacity(0.3)),
+                ),
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          'ZUPADEL',
+                          style: GoogleFonts.syne(
+                            fontSize: 16, fontWeight: FontWeight.w800,
+                            color: ZuTheme.accent, letterSpacing: -0.5,
+                          ),
+                        ),
+                        const Spacer(),
+                        Text(
+                          user?.fullName ?? '',
+                          style: GoogleFonts.dmSans(
+                            fontSize: 13, color: ZuTheme.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    if (stats != null) ...[
+                      _ShareStatRow('Matchs joués', '${stats.matchesPlayed}'),
+                      _ShareStatRow('Victoires',    '${stats.matchesWon}'),
+                      _ShareStatRow('Win rate',     '${(stats.winRate * 100).toStringAsFixed(0)}%'),
+                      _ShareStatRow('Heures jouées','${stats.hoursPlayed}h'),
+                      _ShareStatRow('Sets gagnés',  '${stats.setsWon}'),
+                    ] else ...[
+                      const Center(child: Text('Aucune stat disponible')),
+                    ],
+                    const SizedBox(height: 16),
+                    Center(
+                      child: Text(
+                        'zupadel.app',
+                        style: GoogleFonts.dmSans(
+                          fontSize: 11, color: ZuTheme.textSecondary,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 32),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: ZuButton(
+              label: 'Partager',
+              loading: _sharing,
+              onPressed: _shareCard,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ShareStatRow extends StatelessWidget {
+  final String label;
+  final String value;
+  const _ShareStatRow(this.label, this.value);
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 6),
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label, style: GoogleFonts.dmSans(fontSize: 14, color: ZuTheme.textSecondary)),
+        Text(value,  style: GoogleFonts.syne(fontSize: 14, fontWeight: FontWeight.w700, color: ZuTheme.textPrimary)),
+      ],
+    ),
+  );
+}
+
+// ══════════════════════════════════════════════
+//  DÉTAIL COACH + ABONNEMENT
+// ══════════════════════════════════════════════
+
+class CoachDetailScreen extends ConsumerStatefulWidget {
+  final String coachId;
+  const CoachDetailScreen({super.key, required this.coachId});
+
+  @override
+  ConsumerState<CoachDetailScreen> createState() => _CoachDetailScreenState();
+}
+
+class _CoachDetailScreenState extends ConsumerState<CoachDetailScreen> {
+  bool _loading = false;
+
+  Future<void> _subscribe(ZuCoach coach) async {
+    if (!kIsWeb) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Abonnement coach disponible sur le web uniquement pour le moment.'),
+        ),
+      );
+      return;
+    }
+    setState(() => _loading = true);
+    try {
+      await ref.read(paymentServiceProvider).subscribeCoach(coach.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Abonnement activé ! Ton profil coach est en ligne.')),
+        );
+        context.pop();
+      }
+    } on StripeException catch (e) {
+      if (e.error.code == FailureCode.Canceled) return;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur : ${e.error.localizedMessage ?? e.error.message}')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur : $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final coachAsync = ref.watch(coachesProvider);
+    final myUid      = ref.watch(authStateProvider).valueOrNull?.uid;
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Coach')),
+      body: coachAsync.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error:   (e, _) => Center(child: Text('$e')),
+        data:    (list) {
+          final coach = list.firstWhere(
+            (c) => c.id == widget.coachId,
+            orElse: () => list.first,
+          );
+          final isMyCoach  = coach.userId == myUid;
+          final isExpired  = coach.subscribedUntil == null ||
+              coach.subscribedUntil!.isBefore(DateTime.now());
+
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+            children: [
+              ZuCoachCard(coach: coach),
+              const SizedBox(height: 20),
+              if (isMyCoach) ...[
+                ZuCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Mon abonnement coach', style: Theme.of(context).textTheme.headlineMedium),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          ZuTag(
+                            isExpired ? 'Expiré' : 'Actif',
+                            style: isExpired ? ZuTagStyle.red : ZuTagStyle.green,
+                          ),
+                          if (!isExpired && coach.subscribedUntil != null) ...[
+                            const SizedBox(width: 8),
+                            Text(
+                              'jusqu\'au ${DateFormat('d MMM yyyy', 'fr_FR').format(coach.subscribedUntil!)}',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      ZuButton(
+                        label: isExpired ? 'Renouveler — 10€/mois' : 'Gérer l\'abonnement',
+                        loading: _loading,
+                        onPressed: () => _subscribe(coach),
+                      ),
+                    ],
+                  ),
+                ),
+              ] else ...[
+                ZuCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Spécialités', style: Theme.of(context).textTheme.headlineMedium),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8, runSpacing: 8,
+                        children: coach.specialties.map((s) => ZuTag(s, style: ZuTagStyle.neutral)).toList(),
+                      ),
+                      const SizedBox(height: 12),
+                      Text('Niveaux accompagnés', style: Theme.of(context).textTheme.headlineMedium),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8, runSpacing: 8,
+                        children: coach.playerLevels.map((l) => ZuTag(l, style: ZuTagStyle.green)).toList(),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════
+//  PARAMÈTRES NOTIFICATIONS
+// ══════════════════════════════════════════════
+
+class NotificationSettingsScreen extends ConsumerStatefulWidget {
+  const NotificationSettingsScreen({super.key});
+
+  @override
+  ConsumerState<NotificationSettingsScreen> createState() =>
+      _NotificationSettingsScreenState();
+}
+
+class _NotificationSettingsScreenState
+    extends ConsumerState<NotificationSettingsScreen> {
+  bool _matchInvites    = true;
+  bool _matchAccepted   = true;
+  bool _matchCancelled  = true;
+  bool _matchFinished   = true;
+  bool _tournaments     = true;
+  bool _coaching        = true;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Notifications')),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+        children: [
+          ZuCard(
+            child: Column(
+              children: [
+                _NotifRow('Nouveaux matchs près de moi', _matchInvites,
+                    (v) => setState(() => _matchInvites = v)),
+                _NotifRow('Demande acceptée', _matchAccepted,
+                    (v) => setState(() => _matchAccepted = v)),
+                _NotifRow('Match annulé', _matchCancelled,
+                    (v) => setState(() => _matchCancelled = v)),
+                _NotifRow('Match terminé (avis)', _matchFinished,
+                    (v) => setState(() => _matchFinished = v)),
+                _NotifRow('Tournois', _tournaments,
+                    (v) => setState(() => _tournaments = v)),
+                _NotifRow('Coaching', _coaching,
+                    (v) => setState(() => _coaching = v)),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Les préférences de notifications sont sauvegardées localement.',
+            style: Theme.of(context).textTheme.bodySmall,
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NotifRow extends StatelessWidget {
+  final String label;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+  const _NotifRow(this.label, this.value, this.onChanged);
+
+  @override
+  Widget build(BuildContext context) => SwitchListTile(
+    title: Text(label, style: Theme.of(context).textTheme.bodyMedium),
+    value: value,
+    onChanged: onChanged,
+    activeColor: ZuTheme.accent,
+    contentPadding: EdgeInsets.zero,
   );
 }
