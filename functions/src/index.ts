@@ -528,6 +528,31 @@ export const updateStatsOnMatchFinish = onDocumentUpdated(
 );
 
 // ══════════════════════════════════════════════
+//  USER LIFECYCLE
+// ══════════════════════════════════════════════
+
+/** Crée la transaction de crédits d'inscription quand le doc user est créé côté client.
+ *  (Le client ne peut pas écrire dans creditTransactions directement.) */
+export const onUserCreated = onDocumentCreated(
+  {document: "users/{uid}", region: "europe-west3"},
+  async (event) => {
+    const db = getDb();
+    const uid = event.params.uid;
+    const data = event.data?.data();
+    if (!data) return;
+    await db.collection("creditTransactions").add({
+      userId:        uid,
+      type:          "registration",
+      amount:        10,
+      balanceBefore: 0,
+      balanceAfter:  10,
+      description:   "Crédits offerts à l'inscription",
+      createdAt:     admin.firestore.FieldValue.serverTimestamp(),
+    });
+  }
+);
+
+// ══════════════════════════════════════════════
 //  ADMIN — RÔLES ET OPÉRATIONS SÉCURISÉES
 // ══════════════════════════════════════════════
 

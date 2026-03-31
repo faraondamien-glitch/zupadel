@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -13,11 +14,16 @@ import '../theme/zu_theme.dart';
 import '../widgets/widgets.dart';
 
 Future<void> _saveFcmToken(String uid) async {
-  final token = await FirebaseMessaging.instance.getToken();
-  if (token != null) {
-    await FirebaseFirestore.instance.collection('users').doc(uid).update({
-      'fcmToken': token,
-    });
+  if (kIsWeb) return;
+  try {
+    final token = await FirebaseMessaging.instance.getToken();
+    if (token != null) {
+      await FirebaseFirestore.instance.collection('users').doc(uid).update({
+        'fcmToken': token,
+      });
+    }
+  } catch (_) {
+    // Pas de certificat APNS sur simulateur — ignoré
   }
 }
 
