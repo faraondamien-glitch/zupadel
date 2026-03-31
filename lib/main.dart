@@ -41,10 +41,12 @@ void main() async {
   // Firebase
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
-  // Stripe — initialisé sur toutes les plateformes (plugin channel requis),
-  // mais le paiement Stripe n'est disponible qu'en web (PaymentService assert kIsWeb).
-  Stripe.publishableKey = _stripePublishableKey;
-  await Stripe.instance.applySettings();
+  // Stripe — sur mobile uniquement (le plugin dart:io n'existe pas sur web).
+  // Sur web, Stripe.js (chargé dans index.html) initialise directement le SDK JS.
+  if (!kIsWeb) {
+    Stripe.publishableKey = _stripePublishableKey;
+    await Stripe.instance.applySettings();
+  }
 
   // Notifications push (non supportées sur web)
   if (!kIsWeb) {
