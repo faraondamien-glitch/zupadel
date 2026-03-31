@@ -720,7 +720,7 @@ class IAPService {
           await _functions.httpsCallable('validateIAPPurchase').call({
             'productId':        purchase.productID,
             'verificationData': purchase.verificationData.serverVerificationData,
-            'source':           purchase.verificationData.source,
+            'platform':         purchase.verificationData.source,
           });
         } catch (e) {
           debugPrint('[IAP] validation error: $e');

@@ -1,12 +1,17 @@
 import * as admin from "firebase-admin";
 import {onSchedule} from "firebase-functions/v2/scheduler";
 import {onDocumentCreated, onDocumentUpdated} from "firebase-functions/v2/firestore";
-import {onCall, onRequest, HttpsError} from "firebase-functions/v2/https";
+import {onCall, onRequest, HttpsError, type CallableRequest} from "firebase-functions/v2/https";
 import {defineSecret} from "firebase-functions/params";
 import Stripe from "stripe";
+import {google} from "googleapis";
 
-const stripeSecretKey    = defineSecret("STRIPE_SECRET_KEY");
+const stripeSecretKey     = defineSecret("STRIPE_SECRET_KEY");
 const stripeWebhookSecret = defineSecret("STRIPE_WEBHOOK_SECRET");
+const appleSharedSecret   = defineSecret("APPLE_SHARED_SECRET");
+
+// ── Bundle ID Android (doit correspondre à google-services.json) ──
+const ANDROID_PACKAGE_NAME = "com.example.zupadel";
 
 // ── Packs de crédits ─────────────────────────────────────────────
 const CREDIT_PACKS: Record<string, {credits: number; amountCents: number; name: string}> = {
@@ -209,12 +214,13 @@ export const createCoachSubscription = onCall(
     const subscription = await stripe.subscriptions.create({
       customer:         customerId,
       items:            [{
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         price_data: {
           currency:     "eur",
           product_data: {name: "Abonnement Coach Zupadel"},
           unit_amount:  1000, // 10€
           recurring:    {interval: "month"},
-        },
+        } as any,
       }],
       payment_behavior: "default_incomplete",
       expand:           ["latest_invoice.payment_intent"],
@@ -279,9 +285,9 @@ export const createTournamentPaymentIntent = onCall(
       customer:                  customerId,
       automatic_payment_methods: {enabled: true},
       metadata: {
-        firebaseUid, tournamentId, fftLicense,
-        type:       "tournamentEntry",
-        commission: String(commissionCents),
+        firebaseUid: uid, tournamentId, fftLicense,
+        type:        "tournamentEntry",
+        commission:  String(commissionCents),
       },
     });
 
@@ -306,7 +312,7 @@ const IAP_CREDITS: Record<string, number> = {
 };
 
 export const validateIAPPurchase = onCall(
-  {region: "europe-west3"},
+  {region: "europe-west3", secrets: [appleSharedSecret]},
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Non authentifié");
     const {platform, productId, verificationData} = request.data as {
@@ -318,20 +324,28 @@ export const validateIAPPurchase = onCall(
     const credits = IAP_CREDITS[productId];
     if (!credits) throw new HttpsError("invalid-argument", "Produit inconnu : " + productId);
 
+    // ── Vérification du receipt côté store ───────────────────────
+    if (platform === "app_store") {
+      const valid = await verifyAppleReceipt(verificationData, appleSharedSecret.value());
+      if (!valid) throw new HttpsError("invalid-argument", "Receipt Apple invalide");
+    } else if (platform === "google_play") {
+      const valid = await verifyGooglePurchase(productId, verificationData);
+      if (!valid) throw new HttpsError("invalid-argument", "Achat Google invalide");
+    } else {
+      throw new HttpsError("invalid-argument", `Plateforme inconnue : ${platform}`);
+    }
+
     const db  = getDb();
     const uid = request.auth.uid;
 
     // Idempotence : vérifier que ce verificationData n'a pas déjà été traité
-    const txRef   = db.collection("iapReceipts").doc(verificationData.substring(0, 100).replace(/\//g, "_"));
-    const txSnap  = await txRef.get();
+    const receiptKey = verificationData.substring(0, 100).replace(/[/\\. ]/g, "_");
+    const txRef  = db.collection("iapReceipts").doc(receiptKey);
+    const txSnap = await txRef.get();
     if (txSnap.exists) {
       console.log(`IAP déjà traité pour ${uid} — ${productId}`);
       return {success: true, creditsAdded: 0, alreadyProcessed: true};
     }
-
-    // TODO: Vérification serveur Apple/Google avant mise en production
-    // Apple  → POST https://buy.itunes.apple.com/verifyReceipt
-    // Google → Google Play Developer API purchases.products.get
 
     const userRef = db.collection("users").doc(uid);
     const userDoc = await userRef.get();
@@ -345,11 +359,10 @@ export const validateIAPPurchase = onCall(
       amount:        credits,
       balanceBefore: current,
       balanceAfter:  current + credits,
-      refId:         verificationData.substring(0, 100),
+      refId:         receiptKey,
       description:   `Achat IAP ${platform} — ${productId} (${credits} crédits)`,
       createdAt:     admin.firestore.FieldValue.serverTimestamp(),
     });
-    // Marquer le receipt comme traité (idempotence)
     batch.set(txRef, {uid, productId, platform, processedAt: admin.firestore.FieldValue.serverTimestamp()});
     await batch.commit();
 
@@ -556,8 +569,6 @@ export const onUserCreated = onDocumentCreated(
 //  ADMIN — RÔLES ET OPÉRATIONS SÉCURISÉES
 // ══════════════════════════════════════════════
 
-type CallableRequest = Parameters<Parameters<typeof onCall>[1]>[0];
-
 function assertAdmin(request: CallableRequest) {
   if (!request.auth) throw new HttpsError("unauthenticated", "Non authentifié");
   if (!request.auth.token.admin) throw new HttpsError("permission-denied", "Accès refusé : rôle admin requis");
@@ -700,6 +711,65 @@ export const notifyPlayerRefused = onCall(
 );
 
 // ── Helpers ──────────────────────────────────────────────────────
+
+/**
+ * Vérifie un receipt Apple via l'API App Store.
+ * Essaie d'abord la production, puis le sandbox (status 21007).
+ * Doc : https://developer.apple.com/documentation/appstorereceipts/verifyreceipt
+ */
+async function verifyAppleReceipt(receiptData: string, sharedSecret: string): Promise<boolean> {
+  const payload = {"receipt-data": receiptData, password: sharedSecret};
+
+  const tryVerify = async (url: string): Promise<{status: number}> => {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload),
+    });
+    return res.json() as Promise<{status: number}>;
+  };
+
+  let result = await tryVerify("https://buy.itunes.apple.com/verifyReceipt");
+  // 21007 = receipt sandbox soumis à la production → réessayer avec sandbox
+  if (result.status === 21007) {
+    result = await tryVerify("https://sandbox.itunes.apple.com/verifyReceipt");
+  }
+
+  if (result.status !== 0) {
+    console.error(`Apple receipt invalid, status: ${result.status}`);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Vérifie un achat Google Play via l'API Android Publisher.
+ * Prérequis : le compte de service Firebase doit avoir le rôle
+ * "Lecteur de données financières" dans Google Play Console.
+ * Doc : https://developers.google.com/android-publisher/api-ref/rest/v3/purchases.products/get
+ */
+async function verifyGooglePurchase(productId: string, purchaseToken: string): Promise<boolean> {
+  try {
+    const auth = new google.auth.GoogleAuth({
+      scopes: ["https://www.googleapis.com/auth/androidpublisher"],
+    });
+    const publisher = google.androidpublisher({version: "v3", auth});
+    const result = await publisher.purchases.products.get({
+      packageName: ANDROID_PACKAGE_NAME,
+      productId,
+      token: purchaseToken,
+    });
+    // purchaseState : 0 = acheté, 1 = annulé, 2 = en attente
+    if (result.data.purchaseState !== 0) {
+      console.error(`Google purchase invalid, state: ${result.data.purchaseState}`);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error("Google Play verification error:", e);
+    return false;
+  }
+}
 
 async function sendNotification(
   uid: string,
