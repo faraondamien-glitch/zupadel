@@ -141,12 +141,15 @@ App Store Guideline 3.1.1 : les achats de biens numériques (crédits) **doivent
 `validateIAPPurchase` — reçoit `{platform, productId, verificationData}`, vérifie le receipt Apple/Google, crédite les crédits dans Firestore.
 
 ### main.dart
-Stripe initialisé uniquement si `kIsWeb` :
+Stripe doit être initialisé sur **toutes les plateformes** (le plugin enregistre un channel natif au démarrage). Sans ça → écran noir au démarrage sur iOS/Android.
+Le guard `kIsWeb` ne s'applique qu'à `PaymentService` (UI de paiement Stripe), pas à l'init :
 ```dart
-if (kIsWeb) {
-  Stripe.publishableKey = _stripePublishableKey;
-  await Stripe.instance.applySettings();
-}
+// main.dart — toutes plateformes
+Stripe.publishableKey = _stripePublishableKey;
+await Stripe.instance.applySettings();
+
+// services.dart / PaymentService — web seulement
+assert(kIsWeb, 'PaymentService Stripe is web-only');
 ```
 
 ---
@@ -176,6 +179,10 @@ if (kIsWeb) {
 ### Crash null sur `fromFirestore` (Timestamp)
 - **Cause** : `(d['createdAt'] as Timestamp).toDate()` crash si le champ est null (optimistic write Firestore avec `FieldValue.serverTimestamp()` — premier snapshot avant écriture serveur)
 - **Solution** : Toujours utiliser `(d['field'] as Timestamp?)?.toDate() ?? DateTime.now()` dans tous les modèles
+
+### Écran noir au démarrage (iOS/Android) après ajout du guard `if (kIsWeb)` sur Stripe init
+- **Cause** : `flutter_stripe` enregistre un channel natif au démarrage → si `Stripe.publishableKey` n'est jamais assigné, le channel plante silencieusement → écran noir
+- **Solution** : Toujours initialiser Stripe (publishableKey + applySettings) dans `main()`, sans guard plateforme. Le guard `kIsWeb` s'applique uniquement à `PaymentService` (l'UI de paiement)
 
 ### Erreur Firestore sur `watchMyMatches`
 - **Cause** : `arrayContains` + `whereIn` + `orderBy` sur des champs différents nécessite un index composite Firestore non créé
