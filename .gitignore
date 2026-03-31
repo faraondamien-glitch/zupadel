@@ -24,7 +24,7 @@ android/app/google-services.json
 # iOS
 ios/Pods/
 ios/.symlinks/
-ios/Runner/GoogleService-Info.plist
+# ios/Runner/GoogleService-Info.plist
 
 # Secrets / env
 *.env
