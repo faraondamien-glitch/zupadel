@@ -19,9 +19,9 @@ service cloud.firestore {
       allow create: if isAuth();
       allow update: if isAuth() && (
         request.auth.uid == resource.data.organizerId ||
-        // rejoindre / quitter
+        // rejoindre / quitter / miser
         request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['pendingIds', 'playerIds'])
+          .hasOnly(['pendingIds', 'playerIds', 'bettorIds'])
       );
       allow delete: if false;
     }

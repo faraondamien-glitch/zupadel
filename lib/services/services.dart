@@ -281,18 +281,8 @@ class MatchService {
       final matchUpdate = <String, dynamic>{'pendingIds': FieldValue.arrayUnion([_uid])};
       if (placeBet) matchUpdate['bettorIds'] = FieldValue.arrayUnion([_uid]);
       tx.update(matchRef, matchUpdate);
-
-      // Log transaction
-      tx.set(_db.collection('creditTransactions').doc(), {
-        'userId':        _uid,
-        'type':          'joinMatch',
-        'amount':        -cost,
-        'balanceBefore': credits,
-        'balanceAfter':  credits - cost,
-        'refId':         matchId,
-        'description':   'Rejoindre un match',
-        'createdAt':     FieldValue.serverTimestamp(),
-      });
+      // Note: la transaction creditTransactions est créée par la Cloud Function
+      // onMatchJoined (règle Firestore interdit l'écriture client sur creditTransactions)
     });
   }
 

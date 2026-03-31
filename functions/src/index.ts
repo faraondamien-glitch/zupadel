@@ -411,6 +411,47 @@ export const autoAcceptPlayers = onSchedule(
   }
 );
 
+/** Crée la transaction creditTransactions quand un joueur rejoint un match
+ *  (le client ne peut pas écrire dans creditTransactions directement). */
+export const onMatchPendingChanged = onDocumentUpdated(
+  {document: "matches/{matchId}", region: "europe-west3"},
+  async (event) => {
+    const before = event.data?.before.data();
+    const after  = event.data?.after.data();
+    if (!before || !after) return;
+
+    const prevPending: string[] = before.pendingIds ?? [];
+    const newPending:  string[] = after.pendingIds  ?? [];
+
+    // Trouver les UIDs qui viennent d'être ajoutés à pendingIds
+    const added = newPending.filter((uid) => !prevPending.includes(uid));
+    if (added.length === 0) return;
+
+    const db = getDb();
+    const matchId = event.params.matchId;
+
+    await Promise.all(added.map(async (uid) => {
+      const placedBet = (after.bettorIds ?? []).includes(uid) &&
+                        !(before.bettorIds ?? []).includes(uid);
+      const cost = placedBet ? 2 : 1;
+      const userDoc = await db.collection("users").doc(uid).get();
+      const balanceAfter = (userDoc.data()?.credits as number ?? 0);
+      const balanceBefore = balanceAfter + cost; // crédits déjà débités côté client
+
+      await db.collection("creditTransactions").add({
+        userId:        uid,
+        type:          "joinMatch",
+        amount:        -cost,
+        balanceBefore,
+        balanceAfter,
+        refId:         matchId,
+        description:   "Rejoindre un match",
+        createdAt:     admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }));
+  }
+);
+
 export const onMatchCreated = onDocumentCreated(
   {document: "matches/{matchId}", region: "europe-west3"},
   async (event) => {
