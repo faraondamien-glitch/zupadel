@@ -13,6 +13,7 @@ import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import '../theme/zu_theme.dart';
@@ -1727,7 +1728,7 @@ class _CoachDetailScreenState extends ConsumerState<CoachDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final coachAsync = ref.watch(coachesProvider);
+    final coachAsync = ref.watch(coachDetailProvider(widget.coachId));
     final myUid      = ref.watch(authStateProvider).valueOrNull?.uid;
 
     return Scaffold(
@@ -1735,14 +1736,10 @@ class _CoachDetailScreenState extends ConsumerState<CoachDetailScreen> {
       body: coachAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error:   (e, _) => Center(child: Text('$e')),
-        data:    (list) {
-          final coach = list.firstWhere(
-            (c) => c.id == widget.coachId,
-            orElse: () => list.first,
-          );
-          final isMyCoach  = coach.userId == myUid;
-          final isExpired  = coach.subscribedUntil == null ||
-              coach.subscribedUntil!.isBefore(DateTime.now());
+        data:    (coach) {
+          if (coach == null) return const Center(child: Text('Coach introuvable'));
+          final isMyCoach = coach.userId == myUid;
+          final isExpired = coach.subscribedUntil.isBefore(DateTime.now());
 
           return ListView(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
@@ -1750,6 +1747,7 @@ class _CoachDetailScreenState extends ConsumerState<CoachDetailScreen> {
               ZuCoachCard(coach: coach),
               const SizedBox(height: 20),
               if (isMyCoach) ...[
+                // Vue propriétaire : gestion de l'abonnement
                 ZuCard(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1762,10 +1760,10 @@ class _CoachDetailScreenState extends ConsumerState<CoachDetailScreen> {
                             isExpired ? 'Expiré' : 'Actif',
                             style: isExpired ? ZuTagStyle.red : ZuTagStyle.green,
                           ),
-                          if (!isExpired && coach.subscribedUntil != null) ...[
+                          if (!isExpired) ...[
                             const SizedBox(width: 8),
                             Text(
-                              'jusqu\'au ${DateFormat('d MMM yyyy', 'fr_FR').format(coach.subscribedUntil!)}',
+                              'jusqu\'au ${DateFormat('d MMM yyyy', 'fr_FR').format(coach.subscribedUntil)}',
                               style: Theme.of(context).textTheme.bodySmall,
                             ),
                           ],
@@ -1781,6 +1779,20 @@ class _CoachDetailScreenState extends ConsumerState<CoachDetailScreen> {
                   ),
                 ),
               ] else ...[
+                // Vue joueur : profil complet du coach
+                if (coach.bio.isNotEmpty) ...[
+                  ZuCard(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('À propos', style: Theme.of(context).textTheme.headlineMedium),
+                        const SizedBox(height: 8),
+                        Text(coach.bio, style: Theme.of(context).textTheme.bodyMedium),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 ZuCard(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1801,6 +1813,47 @@ class _CoachDetailScreenState extends ConsumerState<CoachDetailScreen> {
                     ],
                   ),
                 ),
+                if (coach.availabilities != null && coach.availabilities!.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  ZuCard(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Disponibilités', style: Theme.of(context).textTheme.headlineMedium),
+                        const SizedBox(height: 8),
+                        Text(coach.availabilities!, style: Theme.of(context).textTheme.bodyMedium),
+                      ],
+                    ),
+                  ),
+                ],
+                if (coach.instagram != null || coach.youtube != null) ...[
+                  const SizedBox(height: 12),
+                  ZuCard(
+                    child: Wrap(
+                      spacing: 12, runSpacing: 8,
+                      children: [
+                        if (coach.instagram != null)
+                          OutlinedButton.icon(
+                            onPressed: () => launchUrl(
+                              Uri.parse('https://instagram.com/${coach.instagram}'),
+                              mode: LaunchMode.externalApplication,
+                            ),
+                            icon: const Icon(Icons.photo_camera_outlined, size: 16),
+                            label: Text('@${coach.instagram}'),
+                          ),
+                        if (coach.youtube != null)
+                          OutlinedButton.icon(
+                            onPressed: () => launchUrl(
+                              Uri.parse(coach.youtube!),
+                              mode: LaunchMode.externalApplication,
+                            ),
+                            icon: const Icon(Icons.play_circle_outline, size: 16),
+                            label: const Text('YouTube'),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
               ],
             ],
           );

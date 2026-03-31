@@ -617,12 +617,20 @@ class CoachService {
       .orderBy('avgRating', descending: true)
       .snapshots()
       .map((s) => s.docs.map(ZuCoach.fromFirestore).toList());
+
+  Stream<ZuCoach?> watchCoach(String id) => _db.collection('coaches')
+      .doc(id)
+      .snapshots()
+      .map((d) => d.exists ? ZuCoach.fromFirestore(d) : null);
 }
 
 final coachServiceProvider = Provider<CoachService>((ref) => CoachService());
 
 final coachesProvider = StreamProvider<List<ZuCoach>>((ref) =>
     ref.watch(coachServiceProvider).watchCoaches());
+
+final coachDetailProvider = StreamProvider.family<ZuCoach?, String>((ref, id) =>
+    ref.watch(coachServiceProvider).watchCoach(id));
 
 // ══════════════════════════════════════════════
 //  CREDIT TRANSACTIONS
