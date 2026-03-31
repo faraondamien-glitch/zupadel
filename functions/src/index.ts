@@ -541,6 +541,134 @@ export const updateStatsOnMatchFinish = onDocumentUpdated(
 );
 
 // ══════════════════════════════════════════════
+//  SEED — CLUBS PARTENAIRES (à appeler une seule fois)
+// ══════════════════════════════════════════════
+
+const CLUBS_DATA = [
+  {
+    name: "Padel Station Paris 15",
+    address: "120 avenue Félix Faure",
+    city: "Paris",
+    location: {latitude: 48.8397, longitude: 2.2937},
+    phoneNumber: "+33 1 45 57 00 15",
+    website: "https://padelstationparis15.fr",
+    amenities: ["Parking", "Vestiaires", "Douches", "Bar", "Pro shop"],
+    isActive: true,
+    pricePerSlotCredits: 6,
+    slotDurationMinutes: 90,
+    openingHours: {
+      monday: "08:00-23:00", tuesday: "08:00-23:00", wednesday: "08:00-23:00",
+      thursday: "08:00-23:00", friday: "08:00-23:00",
+      saturday: "08:00-22:00", sunday: "09:00-21:00",
+    },
+    courts: [
+      {name: "Court 1", surface: "Gazon synthétique", isIndoor: true,  isActive: true},
+      {name: "Court 2", surface: "Gazon synthétique", isIndoor: true,  isActive: true},
+      {name: "Court 3", surface: "Gazon synthétique", isIndoor: false, isActive: true},
+      {name: "Court 4", surface: "Gazon synthétique", isIndoor: false, isActive: true},
+    ],
+  },
+  {
+    name: "Club Padel Boulogne",
+    address: "35 rue de Billancourt",
+    city: "Boulogne-Billancourt",
+    location: {latitude: 48.8379, longitude: 2.2390},
+    phoneNumber: "+33 1 46 08 12 35",
+    website: "https://clubpadelboulogne.fr",
+    amenities: ["Parking", "Vestiaires", "Douches", "Cafétéria"],
+    isActive: true,
+    pricePerSlotCredits: 5,
+    slotDurationMinutes: 90,
+    openingHours: {
+      monday: "09:00-22:00", tuesday: "09:00-22:00", wednesday: "09:00-22:00",
+      thursday: "09:00-22:00", friday: "09:00-22:00",
+      saturday: "09:00-21:00", sunday: "10:00-20:00",
+    },
+    courts: [
+      {name: "Court A", surface: "Gazon synthétique", isIndoor: true,  isActive: true},
+      {name: "Court B", surface: "Gazon synthétique", isIndoor: true,  isActive: true},
+      {name: "Court C", surface: "Béton poreux",      isIndoor: false, isActive: true},
+    ],
+  },
+  {
+    name: "Padel Indoor Vincennes",
+    address: "8 avenue de Paris",
+    city: "Vincennes",
+    location: {latitude: 48.8479, longitude: 2.4386},
+    phoneNumber: "+33 1 43 28 55 08",
+    website: "https://padelindoorvincennes.fr",
+    amenities: ["Parking gratuit", "Vestiaires", "Douches", "Distributeur", "Location raquettes"],
+    isActive: true,
+    pricePerSlotCredits: 4,
+    slotDurationMinutes: 60,
+    openingHours: {
+      monday: "07:00-23:00", tuesday: "07:00-23:00", wednesday: "07:00-23:00",
+      thursday: "07:00-23:00", friday: "07:00-23:00",
+      saturday: "08:00-22:00", sunday: "09:00-21:00",
+    },
+    courts: [
+      {name: "Court 1", surface: "Moquette acrylique", isIndoor: true, isActive: true},
+      {name: "Court 2", surface: "Moquette acrylique", isIndoor: true, isActive: true},
+    ],
+  },
+  {
+    name: "Urban Padel Levallois",
+    address: "22 rue Anatole France",
+    city: "Levallois-Perret",
+    location: {latitude: 48.8969, longitude: 2.2853},
+    phoneNumber: "+33 1 47 57 30 22",
+    website: "https://urbanpadellevallois.fr",
+    amenities: ["Parking", "Vestiaires", "Bar sportif", "Cours collectifs"],
+    isActive: true,
+    pricePerSlotCredits: 7,
+    slotDurationMinutes: 90,
+    openingHours: {
+      monday: "08:00-22:30", tuesday: "08:00-22:30", wednesday: "08:00-22:30",
+      thursday: "08:00-22:30", friday: "08:00-22:30",
+      saturday: "09:00-21:00", sunday: "09:00-20:00",
+    },
+    courts: [
+      {name: "Court 1 — Panorama", surface: "Gazon synthétique", isIndoor: true,  isActive: true},
+      {name: "Court 2 — Panorama", surface: "Gazon synthétique", isIndoor: true,  isActive: true},
+      {name: "Court Terrasse",     surface: "Gazon synthétique", isIndoor: false, isActive: true},
+    ],
+  },
+];
+
+export const seedClubs = onCall(
+  {region: "europe-west3"},
+  async (request) => {
+    assertAdmin(request);
+    const db = getDb();
+
+    let clubsCreated  = 0;
+    let courtsCreated = 0;
+
+    for (const club of CLUBS_DATA) {
+      const {courts, location, ...clubData} = club;
+      const clubRef = db.collection("clubs").doc();
+
+      await clubRef.set({
+        ...clubData,
+        location: new admin.firestore.GeoPoint(location.latitude, location.longitude),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      clubsCreated++;
+
+      for (const court of courts) {
+        await clubRef.collection("courts").add({
+          ...court,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        courtsCreated++;
+      }
+    }
+
+    return {success: true, clubsCreated, courtsCreated};
+  }
+);
+
+// ══════════════════════════════════════════════
 //  USER LIFECYCLE
 // ══════════════════════════════════════════════
 
