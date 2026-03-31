@@ -381,30 +381,11 @@ class MatchService {
   }
 
   Future<void> cancelMatch({required String matchId}) async {
-    final matchRef = _db.collection('matches').doc(matchId);
-    final matchDoc = await matchRef.get();
-    final match = ZuMatch.fromFirestore(matchDoc);
-
-    final batch = _db.batch();
-    batch.update(matchRef, {'status': MatchStatus.cancelled.name});
-
-    // Remboursement automatique de tous les joueurs (sauf organisateur)
-    for (final pid in match.playerIds) {
-      if (pid == match.organizerId) continue;
-      final playerRef = _db.collection('users').doc(pid);
-      batch.update(playerRef, {'credits': FieldValue.increment(1)});
-      batch.set(_db.collection('creditTransactions').doc(), {
-        'userId':      pid,
-        'type':        'refund',
-        'amount':      1,
-        'refId':       matchId,
-        'description': 'Remboursement : match annulé',
-        'createdAt':   FieldValue.serverTimestamp(),
-      });
-    }
-
-    await batch.commit();
-    // Les notifications N4 sont envoyées par le trigger onMatchCancelled (index.ts)
+    // Le remboursement des crédits et les notifications sont gérés
+    // par le trigger onMatchCancelled dans les Cloud Functions (index.ts).
+    await _db.collection('matches').doc(matchId).update({
+      'status': MatchStatus.cancelled.name,
+    });
   }
 
   Future<void> leaveReview({
