@@ -455,14 +455,14 @@ class MatchService {
   Stream<List<ZuMatch>> watchNearbyMatches({Position? userPosition}) {
     return _db.collection('matches')
         .where('status', isEqualTo: MatchStatus.open.name)
-        .orderBy('startTime')
         .limit(50)
         .snapshots()
         .map((s) {
-          final all = s.docs.map(ZuMatch.fromFirestore).toList();
+          final all = s.docs.map(ZuMatch.fromFirestore).toList()
+            ..sort((a, b) => a.startTime.compareTo(b.startTime));
           if (userPosition == null) return all;
           return all.where((m) {
-            if (m.location == null) return true; // sans coord → inclus par défaut
+            if (m.location == null) return true;
             return LocationService.withinRadius(m.location!, userPosition);
           }).toList();
         });
@@ -485,23 +485,28 @@ class MatchService {
 
   Stream<List<ZuMatch>> watchFilteredMatches(MatchFilter filter) {
     Query<Map<String, dynamic>> query = _db.collection('matches')
-        .where('status', isEqualTo: MatchStatus.open.name)
-        .orderBy('startTime');
+        .where('status', isEqualTo: MatchStatus.open.name);
 
     if (filter.type != null) {
       query = query.where('type', isEqualTo: filter.type!.name);
     }
-    if (filter.todayOnly) {
-      final start = DateTime.now().copyWith(hour: 0, minute: 0);
-      final end   = start.add(const Duration(days: 1));
-      query = query
-          .where('startTime', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-          .where('startTime', isLessThan: Timestamp.fromDate(end));
-    }
 
-    return query.snapshots().map(
-      (s) => s.docs.map(ZuMatch.fromFirestore).toList(),
-    );
+    return query.snapshots().map((s) {
+      var list = s.docs.map(ZuMatch.fromFirestore).toList();
+      // Tri et filtres client-side (évite les index composites Firestore)
+      list.sort((a, b) => a.startTime.compareTo(b.startTime));
+      if (filter.todayOnly) {
+        final start = DateTime.now().copyWith(hour: 0, minute: 0, second: 0, millisecond: 0);
+        final end   = start.add(const Duration(days: 1));
+        list = list.where((m) =>
+            m.startTime.isAfter(start) && m.startTime.isBefore(end)).toList();
+      }
+      if (filter.level != null) {
+        list = list.where((m) =>
+            m.levelMin <= filter.level! && filter.level! <= m.levelMax).toList();
+      }
+      return list;
+    });
   }
 
   Stream<ZuMatch?> watchMatch(String matchId) => _db.collection('matches')
