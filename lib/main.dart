@@ -46,10 +46,12 @@ void main() async {
   Stripe.publishableKey = _stripePublishableKey;
   await Stripe.instance.applySettings();
 
-  // Notifications push
-  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
-  await _initFcm();
-  _setupFcmHandlers();
+  // Notifications push (non supportées sur web)
+  if (!kIsWeb) {
+    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+    await _initFcm();
+    _setupFcmHandlers();
+  }
 
   // Locale française pour les dates
   await initializeDateFormatting('fr_FR', null);
