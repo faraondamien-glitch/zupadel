@@ -75,7 +75,7 @@ class ZuUser {
       credits:       d['credits'] ?? 0,
       referralCode:  d['referralCode'] ?? '',
       referralCount: d['referralCount'] ?? 0,
-      createdAt:     (d['createdAt'] as Timestamp).toDate(),
+      createdAt:     (d['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
 
@@ -166,7 +166,7 @@ class ZuMatch {
       club:            d['club'] ?? '',
       location:        d['location'],
       city:            d['city'],
-      startTime:       (d['startTime'] as Timestamp).toDate(),
+      startTime:       (d['startTime'] as Timestamp?)?.toDate() ?? DateTime.now(),
       durationMinutes: d['durationMinutes'] ?? 90,
       levelMin:        d['levelMin'] ?? 1,
       levelMax:        d['levelMax'] ?? 7,
@@ -180,7 +180,7 @@ class ZuMatch {
       score:           d['score'],
       avgRating:       (d['avgRating'] as num?)?.toDouble(),
       ratingCount:     d['ratingCount'] ?? 0,
-      createdAt:       (d['createdAt'] as Timestamp).toDate(),
+      createdAt:       (d['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
 
@@ -275,8 +275,8 @@ class ZuTournament {
       title:         d['title'] ?? '',
       club:          d['club'] ?? '',
       level:         d['level'] ?? 'P100',
-      startDate:     (d['startDate'] as Timestamp).toDate(),
-      endDate:       (d['endDate'] as Timestamp).toDate(),
+      startDate:     (d['startDate'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      endDate:       (d['endDate'] as Timestamp?)?.toDate() ?? DateTime.now(),
       category:      d['category'] ?? 'Mixte',
       surface:       d['surface'] ?? 'Indoor',
       maxPlayers:    d['maxPlayers'] ?? 16,
@@ -287,7 +287,7 @@ class ZuTournament {
       contactEmail:  d['contactEmail'] ?? '',
       status:        TournamentStatus.values.byName(d['status'] ?? 'pending'),
       registeredIds: List<String>.from(d['registeredIds'] ?? []),
-      createdAt:     (d['createdAt'] as Timestamp).toDate(),
+      createdAt:     (d['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
 
@@ -359,7 +359,7 @@ class ZuCoach {
       avgRating:       (d['avgRating'] as num?)?.toDouble() ?? 0,
       ratingCount:     d['ratingCount'] ?? 0,
       isActive:        d['isActive'] ?? false,
-      subscribedUntil: (d['subscribedUntil'] as Timestamp).toDate(),
+      subscribedUntil: (d['subscribedUntil'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
 
@@ -402,7 +402,7 @@ class CreditTransaction {
       balanceAfter:  d['balanceAfter'] ?? 0,
       refId:         d['refId'],
       description:   d['description'] ?? '',
-      createdAt:     (d['createdAt'] as Timestamp).toDate(),
+      createdAt:     (d['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
 }
