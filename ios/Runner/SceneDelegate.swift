@@ -1,6 +1,6 @@
-import Flutter
 import UIKit
 
-class SceneDelegate: FlutterSceneDelegate {
-
+// Scene-based lifecycle disabled — app uses classic FlutterAppDelegate
+class SceneDelegate: UIResponder, UIWindowSceneDelegate {
+  var window: UIWindow?
 }
