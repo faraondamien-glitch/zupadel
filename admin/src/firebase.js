@@ -2,15 +2,14 @@ import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
-// 🔧 Remplace par ta config Firebase (console.firebase.google.com → Paramètres du projet → Tes applications)
 const firebaseConfig = {
-  apiKey: "AIzaSyBxvu8zHy98pFZ3Yh5ilNGOtOvDWSLEZjU",
-  authDomain: "zupadel2.firebaseapp.com",
-  projectId: "zupadel2",
-  storageBucket: "zupadel2.firebasestorage.app",
-  messagingSenderId: "412115504586",
-  appId: "1:412115504586:web:470bfd0261b2d2882e1333",
-  measurementId: "G-71FPXNSCB0"
+  apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
+  authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.REACT_APP_FIREBASE_APP_ID,
+  measurementId: process.env.REACT_APP_FIREBASE_MEASUREMENT_ID,
 };
 
 const app = initializeApp(firebaseConfig);
