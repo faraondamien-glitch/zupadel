@@ -319,8 +319,12 @@ class ZuPlayerSlots extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final stackWidth = maxPlayers <= 0
+        ? 0.0
+        : (maxPlayers - 1) * (avatarSize * 0.72) + avatarSize;
     return SizedBox(
       height: avatarSize,
+      width: stackWidth,
       child: Stack(
         children: List.generate(maxPlayers, (i) {
           final filled = i < playerIds.length;
