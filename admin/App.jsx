@@ -552,6 +552,160 @@ const labelStyle = {
 // ══════════════════════════════════════════════
 //  MAIN APP
 // ══════════════════════════════════════════════
+//  TERRAINS
+// ══════════════════════════════════════════════
+function Terrains() {
+  const [clubs, setClubs]       = useState([]);
+  const [courts, setCourts]     = useState({});   // { clubId: [court, ...] }
+  const [loading, setLoading]   = useState(true);
+  const [seeding, setSeeding]   = useState(false);
+  const [seedDone, setSeedDone] = useState(false);
+  const [seedMsg, setSeedMsg]   = useState("");
+
+  useEffect(() => {
+    const q = query(collection(db, "clubs"), orderBy("name"));
+    return onSnapshot(q, async snap => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setClubs(list);
+      // Charger les terrains de chaque club
+      const allCourts = {};
+      await Promise.all(list.map(async club => {
+        const cSnap = await getDocs(collection(db, "clubs", club.id, "courts"));
+        allCourts[club.id] = cSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      }));
+      setCourts(allCourts);
+      setLoading(false);
+    });
+  }, []);
+
+  const handleSeed = async () => {
+    if (!window.confirm("Créer les 4 clubs partenaires par défaut ? (opération non réversible)")) return;
+    setSeeding(true);
+    setSeedMsg("");
+    try {
+      const fn = httpsCallable(functions, "seedClubs");
+      const result = await fn({});
+      setSeedMsg(`✓ ${result.data.clubsCreated} clubs et ${result.data.courtsCreated} terrains créés.`);
+      setSeedDone(true);
+    } catch (e) {
+      setSeedMsg(`Erreur : ${e.message}`);
+    } finally {
+      setSeeding(false);
+    }
+  };
+
+  if (loading) return <Loader />;
+
+  return (
+    <div>
+      <STitle>Clubs partenaires & Terrains</STitle>
+      <div style={{ fontSize: 13, color: C.muted, fontFamily: font.dm, marginBottom: 20 }}>
+        {clubs.length} club(s) · {Object.values(courts).flat().length} terrain(s) au total
+      </div>
+
+      {/* Seed */}
+      {clubs.length === 0 && (
+        <div style={{ background: C.card, border: `1px solid ${C.gold}`, borderRadius: 12, padding: 20, marginBottom: 24 }}>
+          <div style={{ fontFamily: font.syne, fontWeight: 700, color: C.gold, marginBottom: 8 }}>
+            ⚠ Aucun club configuré
+          </div>
+          <div style={{ fontSize: 13, color: C.muted, fontFamily: font.dm, marginBottom: 16 }}>
+            Initialise les 4 clubs partenaires parisiens (Padel Station Paris 15, Club Padel Boulogne,
+            Padel Indoor Vincennes, Urban Padel Levallois) avec leurs terrains et horaires.
+          </div>
+          <Btn
+            label={seeding ? "Initialisation..." : "Initialiser les clubs partenaires"}
+            onClick={handleSeed}
+            variant="success"
+          />
+          {seedMsg && (
+            <div style={{ marginTop: 12, fontSize: 13, color: seedDone ? C.accent : C.red, fontFamily: font.dm }}>
+              {seedMsg}
+            </div>
+          )}
+        </div>
+      )}
+
+      {clubs.length > 0 && (
+        <div style={{ marginBottom: 20, display: "flex", alignItems: "center", gap: 12 }}>
+          <Btn
+            label={seeding ? "Ajout en cours..." : "Ré-initialiser (ajouter les clubs manquants)"}
+            onClick={handleSeed}
+            variant="default"
+            small
+          />
+          {seedMsg && (
+            <span style={{ fontSize: 13, color: seedDone ? C.accent : C.red, fontFamily: font.dm }}>
+              {seedMsg}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Liste des clubs */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {clubs.map(club => {
+          const clubCourts = courts[club.id] || [];
+          return (
+            <div key={club.id} style={{ background: C.card, border: `1px solid ${club.isActive ? C.border : C.red}`, borderRadius: 12, padding: 16 }}>
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, marginBottom: 12 }}>
+                <div>
+                  <div style={{ fontFamily: font.syne, fontWeight: 700, color: C.text, fontSize: 15 }}>
+                    {club.name}
+                  </div>
+                  <div style={{ fontSize: 12, color: C.muted, fontFamily: font.dm, marginTop: 3 }}>
+                    📍 {club.address}, {club.city}
+                    {club.phoneNumber && <span style={{ marginLeft: 12 }}>📞 {club.phoneNumber}</span>}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
+                  <Badge status={club.isActive ? "active" : "refused"} />
+                  <span style={{ fontSize: 12, color: C.accent, fontFamily: font.syne, fontWeight: 700, background: "rgba(200,240,74,0.1)", padding: "3px 10px", borderRadius: 20 }}>
+                    {club.pricePerSlotCredits} ⬡ / {club.slotDurationMinutes} min
+                  </span>
+                </div>
+              </div>
+
+              {/* Terrains */}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {clubCourts.map(court => (
+                  <div key={court.id} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: "6px 12px", fontSize: 12, fontFamily: font.dm, color: C.text, display: "flex", alignItems: "center", gap: 6 }}>
+                    <span>{court.isIndoor ? "🏠" : "☀️"}</span>
+                    <span style={{ fontWeight: 600 }}>{court.name}</span>
+                    <span style={{ color: C.muted }}>{court.surface}</span>
+                    {!court.isActive && <span style={{ color: C.red, fontSize: 10 }}>INACTIF</span>}
+                  </div>
+                ))}
+                {clubCourts.length === 0 && (
+                  <span style={{ fontSize: 12, color: C.muted, fontFamily: font.dm }}>Aucun terrain</span>
+                )}
+              </div>
+
+              {/* Horaires */}
+              {club.openingHours && (
+                <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {["monday","tuesday","wednesday","thursday","friday","saturday","sunday"].map(day => {
+                    const h = club.openingHours[day];
+                    const labels = { monday: "Lun", tuesday: "Mar", wednesday: "Mer", thursday: "Jeu", friday: "Ven", saturday: "Sam", sunday: "Dim" };
+                    return (
+                      <div key={day} style={{ fontSize: 11, fontFamily: font.dm, color: h ? C.text : C.dim, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6, padding: "3px 8px" }}>
+                        <span style={{ fontWeight: 600 }}>{labels[day]}</span>
+                        {" "}{h || "Fermé"}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {clubs.length === 0 && <Empty text="Aucun club configuré. Utilise le bouton ci-dessus." />}
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════
 const NAV = [
   { id: "dashboard",     label: "Dashboard",    icon: "◈" },
   { id: "users",         label: "Utilisateurs", icon: "◉" },
@@ -559,6 +713,7 @@ const NAV = [
   { id: "registrations", label: "Inscriptions", icon: "◇" },
   { id: "coaches",       label: "Coachs",       icon: "◎" },
   { id: "concours",      label: "Concours",     icon: "◐" },
+  { id: "terrains",      label: "Terrains",     icon: "⬡" },
 ];
 
 export default function App() {
@@ -591,7 +746,7 @@ export default function App() {
   if (user === undefined) return <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", color: C.accent, fontFamily: font.syne, fontSize: 20, fontWeight: 800 }}>ZUPADEL</div>;
   if (!user || !isAdmin) return <Login />;
 
-  const SCREENS = { dashboard: Dashboard, users: Users, tournaments: Tournaments, registrations: Registrations, coaches: Coaches, concours: Concours };
+  const SCREENS = { dashboard: Dashboard, users: Users, tournaments: Tournaments, registrations: Registrations, coaches: Coaches, concours: Concours, terrains: Terrains };
   const Screen = SCREENS[section];
 
   return (
