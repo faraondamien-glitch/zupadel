@@ -4,12 +4,13 @@ import { getFirestore } from "firebase/firestore";
 
 // 🔧 Remplace par ta config Firebase (console.firebase.google.com → Paramètres du projet → Tes applications)
 const firebaseConfig = {
-  apiKey: "REMPLACE_PAR_TA_API_KEY",
+  apiKey: "AIzaSyBxvu8zHy98pFZ3Yh5ilNGOtOvDWSLEZjU",
   authDomain: "zupadel2.firebaseapp.com",
   projectId: "zupadel2",
-  storageBucket: "zupadel2.appspot.com",
-  messagingSenderId: "REMPLACE_PAR_TON_SENDER_ID",
-  appId: "REMPLACE_PAR_TON_APP_ID",
+  storageBucket: "zupadel2.firebasestorage.app",
+  messagingSenderId: "412115504586",
+  appId: "1:412115504586:web:470bfd0261b2d2882e1333",
+  measurementId: "G-71FPXNSCB0"
 };
 
 const app = initializeApp(firebaseConfig);
