@@ -77,17 +77,8 @@ class UserService {
       'referralCount': 0,
       'createdAt':     FieldValue.serverTimestamp(),
     });
-
-    // Credit transaction C1
-    batch.set(_db.collection('creditTransactions').doc(), {
-      'userId':        uid,
-      'type':          'registration',
-      'amount':        10,
-      'balanceBefore': 0,
-      'balanceAfter':  10,
-      'description':   'Crédits offerts à l\'inscription',
-      'createdAt':     FieldValue.serverTimestamp(),
-    });
+    // Note: la transaction creditTransactions de type 'registration' est créée
+    // par la Cloud Function onUserCreated (règle Firestore interdit l'écriture client).
 
     // Parrainage
     if (referralCode != null && referralCode.isNotEmpty) {
