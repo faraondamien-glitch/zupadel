@@ -7,6 +7,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
+import 'package:geolocator/geolocator.dart';
 import '../models/models.dart';
 
 // ══════════════════════════════════════════════
@@ -161,6 +162,47 @@ final currentUserProvider = StreamProvider<ZuUser?>((ref) {
 // ══════════════════════════════════════════════
 //  MATCH SERVICE
 // ══════════════════════════════════════════════
+
+// ══════════════════════════════════════════════
+//  LOCATION SERVICE
+// ══════════════════════════════════════════════
+
+class LocationService {
+  static const double radiusKm = 30.0;
+
+  Future<Position?> getCurrentPosition() async {
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) return null;
+
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) return null;
+    }
+    if (permission == LocationPermission.deniedForever) return null;
+
+    return Geolocator.getCurrentPosition(
+      locationSettings: const LocationSettings(accuracy: LocationAccuracy.medium),
+    );
+  }
+
+  static bool withinRadius(GeoPoint point, Position pos) {
+    final distM = Geolocator.distanceBetween(
+      pos.latitude, pos.longitude,
+      point.latitude, point.longitude,
+    );
+    return distM / 1000 <= radiusKm;
+  }
+}
+
+final locationServiceProvider = Provider<LocationService>((ref) => LocationService());
+
+final userPositionProvider = FutureProvider<Position?>((ref) async {
+  if (kIsWeb) return null;
+  return ref.read(locationServiceProvider).getCurrentPosition();
+});
+
+// ──────────────────────────────────────────────
 
 class MatchFilter {
   final MatchType? type;
@@ -363,15 +405,20 @@ class MatchService {
     await batch.commit();
   }
 
-  Stream<List<ZuMatch>> watchNearbyMatches(String? city) {
-    var query = _db.collection('matches')
+  Stream<List<ZuMatch>> watchNearbyMatches({Position? userPosition}) {
+    return _db.collection('matches')
         .where('status', isEqualTo: MatchStatus.open.name)
         .orderBy('startTime')
-        .limit(20);
-
-    return query.snapshots().map(
-      (s) => s.docs.map(ZuMatch.fromFirestore).toList(),
-    );
+        .limit(50)
+        .snapshots()
+        .map((s) {
+          final all = s.docs.map(ZuMatch.fromFirestore).toList();
+          if (userPosition == null) return all;
+          return all.where((m) {
+            if (m.location == null) return true; // sans coord → inclus par défaut
+            return LocationService.withinRadius(m.location!, userPosition);
+          }).toList();
+        });
   }
 
   Stream<List<ZuMatch>> watchMyMatches(String uid) {
@@ -419,8 +466,8 @@ class MatchService {
 final matchServiceProvider = Provider<MatchService>((ref) => MatchService());
 
 final nearbyMatchesProvider = StreamProvider<List<ZuMatch>>((ref) {
-  final user = ref.watch(currentUserProvider).valueOrNull;
-  return ref.watch(matchServiceProvider).watchNearbyMatches(user?.city);
+  final position = ref.watch(userPositionProvider).valueOrNull;
+  return ref.watch(matchServiceProvider).watchNearbyMatches(userPosition: position);
 });
 
 final myUpcomingMatchesProvider = StreamProvider<List<ZuMatch>>((ref) {
@@ -442,10 +489,13 @@ final matchDetailProvider = StreamProvider.family<ZuMatch?, String>((ref, id) =>
 class TournamentService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final _functions = FirebaseFunctions.instanceFor(region: 'europe-west3');
 
   String get _uid => _auth.currentUser!.uid;
 
-  Future<void> register({
+  /// Retourne `true` si paiement Stripe lancé (web), `false` si inscription directe (tournoi gratuit).
+  /// Lève [StripeException] ou [Exception] en cas d'erreur.
+  Future<bool> register({
     required String tournamentId,
     required String fftLicense,
   }) async {
@@ -455,10 +505,43 @@ class TournamentService {
     final entryFee = (data['entryFee'] as num?)?.toDouble() ?? 0;
 
     if (entryFee > 0) {
-      // TODO: Stripe PaymentSheet, webhook pour confirmer
-      throw UnimplementedError('Paiement Stripe non configuré');
+      if (!kIsWeb) {
+        throw Exception(
+          'Le paiement de l\'inscription est disponible sur le web uniquement pour le moment.',
+        );
+      }
+      // Web → Stripe PaymentSheet
+      final result = await _functions
+          .httpsCallable('createTournamentPaymentIntent')
+          .call({'tournamentId': tournamentId, 'fftLicense': fftLicense});
+
+      final d             = Map<String, dynamic>.from(result.data as Map);
+      final clientSecret  = d['clientSecret'] as String;
+      final ephemeralKey  = d['ephemeralKey'] as String;
+      final customerId    = d['customerId']   as String;
+
+      await Stripe.instance.initPaymentSheet(
+        paymentSheetParameters: SetupPaymentSheetParameters(
+          paymentIntentClientSecret: clientSecret,
+          customerEphemeralKeySecret: ephemeralKey,
+          customerId:                customerId,
+          merchantDisplayName:       'Zupadel',
+          style:                     ThemeMode.dark,
+          appearance: const PaymentSheetAppearance(
+            colors: PaymentSheetAppearanceColors(
+              primary:             Color(0xFF4EE06E),
+              background:          Color(0xFF0D0F14),
+              componentBackground: Color(0xFF1A1D24),
+            ),
+          ),
+        ),
+      );
+      await Stripe.instance.presentPaymentSheet();
+      // La confirmation d'inscription est faite par le webhook stripeWebhook
+      return true;
     }
 
+    // Tournoi gratuit → inscription directe
     await _db.collection('tournamentRegistrations').add({
       'tournamentId': tournamentId,
       'userId':       _uid,
@@ -466,7 +549,7 @@ class TournamentService {
       'status':       'pending',
       'createdAt':    FieldValue.serverTimestamp(),
     });
-    // TODO: send FCM N7 si accepté
+    return false;
   }
 
   Stream<List<ZuTournament>> watchUpcoming() => _db.collection('tournaments')
@@ -643,37 +726,40 @@ final iapProductsProvider = FutureProvider<List<ProductDetails>>((ref) async {
 class PaymentService {
   final _functions = FirebaseFunctions.instanceFor(region: 'europe-west3');
 
-  /// Web only — lance le Payment Sheet Stripe.
-  /// Lève une [StripeException] si l'utilisateur annule.
-  Future<void> buyCredits(String packId) async {
-    assert(kIsWeb, 'PaymentService.buyCredits est réservé au web — utiliser IAPService sur mobile');
+  static const PaymentSheetAppearance _appearance = PaymentSheetAppearance(
+    colors: PaymentSheetAppearanceColors(
+      primary:             Color(0xFF4EE06E),
+      background:          Color(0xFF0D0F14),
+      componentBackground: Color(0xFF1A1D24),
+    ),
+  );
 
-    final result = await _functions
-        .httpsCallable('createPaymentIntent')
-        .call({'packId': packId});
-
-    final data         = Map<String, dynamic>.from(result.data as Map);
-    final clientSecret = data['clientSecret'] as String;
-    final ephemeralKey = data['ephemeralKey'] as String;
-    final customerId   = data['customerId'] as String;
-
+  Future<void> _openPaymentSheet(Map<String, dynamic> d) async {
     await Stripe.instance.initPaymentSheet(
       paymentSheetParameters: SetupPaymentSheetParameters(
-        paymentIntentClientSecret: clientSecret,
-        customerEphemeralKeySecret: ephemeralKey,
-        customerId:                customerId,
+        paymentIntentClientSecret: d['clientSecret'] as String,
+        customerEphemeralKeySecret: d['ephemeralKey'] as String,
+        customerId:                d['customerId']   as String,
         merchantDisplayName:       'Zupadel',
         style:                     ThemeMode.dark,
-        appearance: const PaymentSheetAppearance(
-          colors: PaymentSheetAppearanceColors(
-            primary: Color(0xFF4EE06E),
-            background: Color(0xFF0D0F14),
-            componentBackground: Color(0xFF1A1D24),
-          ),
-        ),
+        appearance:                _appearance,
       ),
     );
     await Stripe.instance.presentPaymentSheet();
+  }
+
+  /// Web only — achat pack crédits via Stripe.
+  Future<void> buyCredits(String packId) async {
+    assert(kIsWeb, 'PaymentService.buyCredits est réservé au web — utiliser IAPService sur mobile');
+    final result = await _functions.httpsCallable('createPaymentIntent').call({'packId': packId});
+    await _openPaymentSheet(Map<String, dynamic>.from(result.data as Map));
+  }
+
+  /// Web only — abonnement coach mensuel 10€.
+  Future<void> subscribeCoach(String coachId) async {
+    assert(kIsWeb, 'Abonnement coach web uniquement');
+    final result = await _functions.httpsCallable('createCoachSubscription').call({'coachId': coachId});
+    await _openPaymentSheet(Map<String, dynamic>.from(result.data as Map));
   }
 }
 

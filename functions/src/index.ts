@@ -102,39 +102,259 @@ export const stripeWebhook = onRequest(
       return;
     }
 
+    const db = getDb();
+
     if (event.type === "payment_intent.succeeded") {
       const pi = event.data.object as Stripe.PaymentIntent;
-      const {firebaseUid, credits, packId} = pi.metadata;
-      if (!firebaseUid || !credits) {
-        res.sendStatus(200);
-        return;
+      const {firebaseUid, credits, packId, type: piType, tournamentId, fftLicense} = pi.metadata;
+
+      if (piType === "tournamentEntry" && firebaseUid && tournamentId) {
+        // Inscription tournoi confirmée
+        await db.collection("tournamentRegistrations").add({
+          tournamentId,
+          userId:          firebaseUid,
+          fftLicense:      fftLicense ?? "",
+          status:          "paid",
+          paymentIntentId: pi.id,
+          createdAt:       admin.firestore.FieldValue.serverTimestamp(),
+        });
+        await sendNotification(firebaseUid, {
+          title: "Inscription confirmée ! 🏆",
+          body:  "Ton paiement est validé. Bonne chance au tournoi !",
+          data:  {tournamentId},
+        });
+      } else if (firebaseUid && credits) {
+        // Achat pack crédits
+        const creditsToAdd = parseInt(credits);
+        const userRef  = db.collection("users").doc(firebaseUid);
+        const userDoc  = await userRef.get();
+        const current  = userDoc.data()?.credits as number ?? 0;
+        const batch = db.batch();
+        batch.update(userRef, {credits: admin.firestore.FieldValue.increment(creditsToAdd)});
+        batch.set(db.collection("creditTransactions").doc(), {
+          userId:        firebaseUid,
+          type:          "purchase",
+          amount:        creditsToAdd,
+          balanceBefore: current,
+          balanceAfter:  current + creditsToAdd,
+          refId:         pi.id,
+          description:   `Achat pack ${packId ?? "?"} — ${creditsToAdd} crédits`,
+          createdAt:     admin.firestore.FieldValue.serverTimestamp(),
+        });
+        await batch.commit();
+        console.log(`+${creditsToAdd} crédits pour ${firebaseUid}`);
       }
+    }
 
-      const db = getDb();
-      const creditsToAdd = parseInt(credits);
-      const userRef  = db.collection("users").doc(firebaseUid);
-      const userDoc  = await userRef.get();
-      const current  = userDoc.data()?.credits as number ?? 0;
-
-      const batch = db.batch();
-      batch.update(userRef, {
-        credits: admin.firestore.FieldValue.increment(creditsToAdd),
-      });
-      batch.set(db.collection("creditTransactions").doc(), {
-        userId:        firebaseUid,
-        type:          "purchase",
-        amount:        creditsToAdd,
-        balanceBefore: current,
-        balanceAfter:  current + creditsToAdd,
-        refId:         pi.id,
-        description:   `Achat pack ${packId} — ${creditsToAdd} crédits`,
-        createdAt:     admin.firestore.FieldValue.serverTimestamp(),
-      });
-      await batch.commit();
-      console.log(`+${creditsToAdd} crédits pour ${firebaseUid}`);
+    if (event.type === "invoice.payment_succeeded") {
+      // Abonnement coach renouvelé / activé
+      const invoice = event.data.object as Stripe.Invoice;
+      const stripe  = new Stripe(stripeSecretKey.value());
+      const subId   = invoice.subscription as string | null;
+      if (!subId) { res.sendStatus(200); return; }
+      const sub = await stripe.subscriptions.retrieve(subId);
+      const {firebaseUid, coachId} = sub.metadata;
+      if (firebaseUid && coachId) {
+        const nextMonth = new Date();
+        nextMonth.setMonth(nextMonth.getMonth() + 1);
+        await db.collection("coaches").doc(coachId).update({
+          subscribedUntil: admin.firestore.Timestamp.fromDate(nextMonth),
+          isActive:        true,
+        });
+        await sendNotification(firebaseUid, {
+          title: "Abonnement coach actif ! 🏋️",
+          body:  "Ton profil coach est visible jusqu'au " + nextMonth.toLocaleDateString("fr-FR"),
+        });
+      }
     }
 
     res.sendStatus(200);
+  }
+);
+
+// ══════════════════════════════════════════════
+//  ABONNEMENT COACH (10€/mois)
+// ══════════════════════════════════════════════
+
+export const createCoachSubscription = onCall(
+  {region: "europe-west3", secrets: [stripeSecretKey]},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Non authentifié");
+    const {coachId} = request.data as {coachId: string};
+    const stripe    = new Stripe(stripeSecretKey.value());
+    const db        = getDb();
+    const uid       = request.auth.uid;
+
+    const userRef  = db.collection("users").doc(uid);
+    const userDoc  = await userRef.get();
+    const userData = userDoc.data()!;
+
+    let customerId = userData.stripeCustomerId as string | undefined;
+    if (!customerId) {
+      const customer = await stripe.customers.create({
+        email:    userData.email as string,
+        name:     `${userData.firstName ?? ""} ${userData.lastName ?? ""}`.trim(),
+        metadata: {firebaseUid: uid},
+      });
+      customerId = customer.id;
+      await userRef.update({stripeCustomerId: customerId});
+    }
+
+    const ephemeralKey = await stripe.ephemeralKeys.create(
+      {customer: customerId},
+      {apiVersion: "2024-06-20"},
+    );
+
+    // Abonnement mensuel à 10€
+    const subscription = await stripe.subscriptions.create({
+      customer:         customerId,
+      items:            [{
+        price_data: {
+          currency:     "eur",
+          product_data: {name: "Abonnement Coach Zupadel"},
+          unit_amount:  1000, // 10€
+          recurring:    {interval: "month"},
+        },
+      }],
+      payment_behavior: "default_incomplete",
+      expand:           ["latest_invoice.payment_intent"],
+      metadata:         {firebaseUid: uid, coachId},
+    });
+
+    const invoice       = subscription.latest_invoice as Stripe.Invoice;
+    const paymentIntent = invoice.payment_intent as Stripe.PaymentIntent;
+
+    return {
+      clientSecret:   paymentIntent.client_secret,
+      ephemeralKey:   ephemeralKey.secret,
+      customerId,
+      subscriptionId: subscription.id,
+    };
+  }
+);
+
+// ══════════════════════════════════════════════
+//  PAIEMENT INSCRIPTION TOURNOI (+ 10% commission)
+// ══════════════════════════════════════════════
+
+export const createTournamentPaymentIntent = onCall(
+  {region: "europe-west3", secrets: [stripeSecretKey]},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Non authentifié");
+    const {tournamentId, fftLicense} = request.data as {tournamentId: string; fftLicense: string};
+    const stripe = new Stripe(stripeSecretKey.value());
+    const db     = getDb();
+    const uid    = request.auth.uid;
+
+    const tDoc = await db.collection("tournaments").doc(tournamentId).get();
+    if (!tDoc.exists) throw new HttpsError("not-found", "Tournoi introuvable");
+    const entryFee = (tDoc.data()?.entryFee ?? 0) as number;
+    if (entryFee <= 0) throw new HttpsError("invalid-argument", "Ce tournoi est gratuit");
+
+    const amountCents     = Math.round(entryFee * 100);
+    const commissionCents = Math.round(amountCents * 0.1); // 10%
+
+    const userRef  = db.collection("users").doc(uid);
+    const userDoc  = await userRef.get();
+    const userData = userDoc.data()!;
+
+    let customerId = userData.stripeCustomerId as string | undefined;
+    if (!customerId) {
+      const customer = await stripe.customers.create({
+        email:    userData.email as string,
+        metadata: {firebaseUid: uid},
+      });
+      customerId = customer.id;
+      await userRef.update({stripeCustomerId: customerId});
+    }
+
+    const ephemeralKey = await stripe.ephemeralKeys.create(
+      {customer: customerId},
+      {apiVersion: "2024-06-20"},
+    );
+
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount:                    amountCents,
+      currency:                  "eur",
+      customer:                  customerId,
+      automatic_payment_methods: {enabled: true},
+      metadata: {
+        firebaseUid, tournamentId, fftLicense,
+        type:       "tournamentEntry",
+        commission: String(commissionCents),
+      },
+    });
+
+    return {
+      clientSecret: paymentIntent.client_secret,
+      ephemeralKey: ephemeralKey.secret,
+      customerId,
+      amountCents,
+    };
+  }
+);
+
+// ══════════════════════════════════════════════
+//  VALIDATION ACHAT IAP (Apple / Google)
+// ══════════════════════════════════════════════
+
+const IAP_CREDITS: Record<string, number> = {
+  credits_starter: 10,
+  credits_joueur:  25,
+  credits_pro:     60,
+  credits_elite:   150,
+};
+
+export const validateIAPPurchase = onCall(
+  {region: "europe-west3"},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Non authentifié");
+    const {platform, productId, verificationData} = request.data as {
+      platform: string;
+      productId: string;
+      verificationData: string;
+    };
+
+    const credits = IAP_CREDITS[productId];
+    if (!credits) throw new HttpsError("invalid-argument", "Produit inconnu : " + productId);
+
+    const db  = getDb();
+    const uid = request.auth.uid;
+
+    // Idempotence : vérifier que ce verificationData n'a pas déjà été traité
+    const txRef   = db.collection("iapReceipts").doc(verificationData.substring(0, 100).replace(/\//g, "_"));
+    const txSnap  = await txRef.get();
+    if (txSnap.exists) {
+      console.log(`IAP déjà traité pour ${uid} — ${productId}`);
+      return {success: true, creditsAdded: 0, alreadyProcessed: true};
+    }
+
+    // TODO: Vérification serveur Apple/Google avant mise en production
+    // Apple  → POST https://buy.itunes.apple.com/verifyReceipt
+    // Google → Google Play Developer API purchases.products.get
+
+    const userRef = db.collection("users").doc(uid);
+    const userDoc = await userRef.get();
+    const current = userDoc.data()?.credits as number ?? 0;
+
+    const batch = db.batch();
+    batch.update(userRef, {credits: admin.firestore.FieldValue.increment(credits)});
+    batch.set(db.collection("creditTransactions").doc(), {
+      userId:        uid,
+      type:          "purchase",
+      amount:        credits,
+      balanceBefore: current,
+      balanceAfter:  current + credits,
+      refId:         verificationData.substring(0, 100),
+      description:   `Achat IAP ${platform} — ${productId} (${credits} crédits)`,
+      createdAt:     admin.firestore.FieldValue.serverTimestamp(),
+    });
+    // Marquer le receipt comme traité (idempotence)
+    batch.set(txRef, {uid, productId, platform, processedAt: admin.firestore.FieldValue.serverTimestamp()});
+    await batch.commit();
+
+    console.log(`IAP +${credits} crédits pour ${uid} (${productId} / ${platform})`);
+    return {success: true, creditsAdded: credits};
   }
 );
 
