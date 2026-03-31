@@ -40,11 +40,10 @@ void main() async {
   // Firebase
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
-  // Stripe (web uniquement — iOS/Android utilisent Apple IAP / Google Play)
-  if (kIsWeb) {
-    Stripe.publishableKey = _stripePublishableKey;
-    await Stripe.instance.applySettings();
-  }
+  // Stripe — initialisé sur toutes les plateformes (plugin channel requis),
+  // mais le paiement Stripe n'est disponible qu'en web (PaymentService assert kIsWeb).
+  Stripe.publishableKey = _stripePublishableKey;
+  await Stripe.instance.applySettings();
 
   // Notifications push
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
