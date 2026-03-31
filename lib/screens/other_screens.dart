@@ -1,14 +1,16 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
+import 'package:flutter_stripe/flutter_stripe.dart';
+import 'package:in_app_purchase/in_app_purchase.dart';
 import '../theme/zu_theme.dart';
 import '../models/models.dart';
 import '../widgets/widgets.dart';
 import '../services/services.dart';
-import 'package:flutter_stripe/flutter_stripe.dart';
 
 // ══════════════════════════════════════════════
 //  TOURNOIS
@@ -692,7 +694,42 @@ class CreditsScreen extends ConsumerStatefulWidget {
 class _CreditsScreenState extends ConsumerState<CreditsScreen> {
   String? _loadingPack;
 
-  Future<void> _buyPack(String packId) async {
+  @override
+  void initState() {
+    super.initState();
+    // Écoute les erreurs IAP (mobile) et les affiche en snackbar
+    if (!kIsWeb) {
+      ref.listenManual(iapServiceProvider, (_, service) {
+        service.purchaseErrors.listen((error) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(error)),
+            );
+          }
+        });
+      });
+    }
+  }
+
+  // ── Achat mobile via Apple IAP / Google Play ──────────────────────
+  Future<void> _buyIAP(ProductDetails product) async {
+    setState(() => _loadingPack = product.id);
+    try {
+      await ref.read(iapServiceProvider).buyProduct(product);
+      // Le résultat arrive via le purchase stream → crédits mis à jour en temps réel
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur : $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loadingPack = null);
+    }
+  }
+
+  // ── Achat web via Stripe ──────────────────────────────────────────
+  Future<void> _buyStripe(String packId) async {
     setState(() => _loadingPack = packId);
     try {
       await ref.read(paymentServiceProvider).buyCredits(packId);
@@ -708,7 +745,7 @@ class _CreditsScreenState extends ConsumerState<CreditsScreen> {
         );
       }
     } on StripeException catch (e) {
-      if (e.error.code == FailureCode.Canceled) return; // utilisateur a annulé
+      if (e.error.code == FailureCode.Canceled) return;
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Erreur paiement : ${e.error.localizedMessage ?? e.error.message}')),
@@ -727,15 +764,15 @@ class _CreditsScreenState extends ConsumerState<CreditsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final user  = ref.watch(currentUserProvider).valueOrNull;
-    final txs   = ref.watch(creditTransactionsProvider);
+    final user = ref.watch(currentUserProvider).valueOrNull;
+    final txs  = ref.watch(creditTransactionsProvider);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Mes crédits')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // Solde
+          // ── Solde ────────────────────────────────────────────
           ZuCard(
             child: Column(
               children: [
@@ -759,22 +796,18 @@ class _CreditsScreenState extends ConsumerState<CreditsScreen> {
 
           ZuSectionTitle('Acheter des crédits'),
           const SizedBox(height: 10),
-          GridView.count(
-            crossAxisCount: 2,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: 10,
-            crossAxisSpacing: 10,
-            childAspectRatio: 1.4,
-            children: [
-              _PackCard(name: 'Starter', credits: 10,  price: 5,  popular: false, packId: 'starter', loading: _loadingPack == 'starter', onTap: () => _buyPack('starter')),
-              _PackCard(name: 'Joueur',  credits: 25,  price: 10, popular: true,  packId: 'joueur',  loading: _loadingPack == 'joueur',  onTap: () => _buyPack('joueur')),
-              _PackCard(name: 'Pro',     credits: 60,  price: 20, popular: false, packId: 'pro',     loading: _loadingPack == 'pro',     onTap: () => _buyPack('pro')),
-              _PackCard(name: 'Elite',   credits: 150, price: 40, popular: false, packId: 'elite',   loading: _loadingPack == 'elite',   onTap: () => _buyPack('elite'), gold: true),
-            ],
-          ),
+
+          // ── Packs ─────────────────────────────────────────────
+          if (kIsWeb)
+            // Web → Stripe, prix hardcodés
+            _WebPackGrid(loadingPack: _loadingPack, onBuy: _buyStripe)
+          else
+            // iOS/Android → Apple IAP / Google Play, prix du store
+            _MobilePackGrid(loadingPack: _loadingPack, onBuy: _buyIAP),
+
           const SizedBox(height: 20),
 
+          // ── Historique ────────────────────────────────────────
           ZuSectionTitle('Historique'),
           const SizedBox(height: 10),
           txs.when(
@@ -796,22 +829,95 @@ class _CreditsScreenState extends ConsumerState<CreditsScreen> {
   }
 }
 
+// ── Grille packs Web (Stripe) ─────────────────────────────────────
+class _WebPackGrid extends StatelessWidget {
+  final String? loadingPack;
+  final void Function(String packId) onBuy;
+  const _WebPackGrid({required this.loadingPack, required this.onBuy});
+
+  @override
+  Widget build(BuildContext context) => GridView.count(
+    crossAxisCount: 2, shrinkWrap: true,
+    physics: const NeverScrollableScrollPhysics(),
+    mainAxisSpacing: 10, crossAxisSpacing: 10, childAspectRatio: 1.4,
+    children: [
+      _PackCard(name: 'Starter', credits: 10,  priceLabel: '4,99 €',  popular: false, id: 'starter', loading: loadingPack == 'starter', onTap: () => onBuy('starter')),
+      _PackCard(name: 'Joueur',  credits: 25,  priceLabel: '9,99 €',  popular: true,  id: 'joueur',  loading: loadingPack == 'joueur',  onTap: () => onBuy('joueur')),
+      _PackCard(name: 'Pro',     credits: 60,  priceLabel: '19,99 €', popular: false, id: 'pro',     loading: loadingPack == 'pro',     onTap: () => onBuy('pro')),
+      _PackCard(name: 'Elite',   credits: 150, priceLabel: '39,99 €', popular: false, id: 'elite',   loading: loadingPack == 'elite',   onTap: () => onBuy('elite'), gold: true),
+    ],
+  );
+}
+
+// ── Grille packs Mobile (IAP) ─────────────────────────────────────
+class _MobilePackGrid extends ConsumerWidget {
+  final String? loadingPack;
+  final void Function(ProductDetails product) onBuy;
+  const _MobilePackGrid({required this.loadingPack, required this.onBuy});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final products = ref.watch(iapProductsProvider);
+    return products.when(
+      loading: () => const SizedBox(
+        height: 180,
+        child: Center(child: CircularProgressIndicator()),
+      ),
+      error: (e, _) => ZuCard(
+        child: Text(
+          'Achats non disponibles pour le moment.',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      ),
+      data: (list) {
+        if (list.isEmpty) {
+          return ZuCard(
+            child: Text(
+              'Boutique indisponible. Vérifie ta connexion.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          );
+        }
+        return GridView.count(
+          crossAxisCount: 2, shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          mainAxisSpacing: 10, crossAxisSpacing: 10, childAspectRatio: 1.4,
+          children: list.map((product) {
+            final m = IAPService.meta[product.id];
+            if (m == null) return const SizedBox.shrink();
+            return _PackCard(
+              name:       m.name,
+              credits:    m.credits,
+              priceLabel: product.price, // prix localisé du store
+              popular:    m.popular,
+              gold:       m.gold,
+              id:         product.id,
+              loading:    loadingPack == product.id,
+              onTap:      () => onBuy(product),
+            );
+          }).toList(),
+        );
+      },
+    );
+  }
+}
+
 class _PackCard extends StatelessWidget {
   final String name;
   final int credits;
-  final double price;
+  final String priceLabel;
   final bool popular;
   final bool gold;
-  final String packId;
+  final String id;
   final bool loading;
   final VoidCallback? onTap;
 
   const _PackCard({
     required this.name,
     required this.credits,
-    required this.price,
+    required this.priceLabel,
     required this.popular,
-    required this.packId,
+    required this.id,
     this.gold = false,
     this.loading = false,
     this.onTap,
@@ -849,7 +955,7 @@ class _PackCard extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  '${price.toStringAsFixed(0)}€',
+                  priceLabel,
                   style: GoogleFonts.syne(fontSize: 16, fontWeight: FontWeight.w700),
                 ),
                 if (loading)

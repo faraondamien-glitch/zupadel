@@ -20,7 +20,7 @@ Application Flutter mobile de padel (iOS + Android + Web).
 |---|---|
 | UI | Flutter 3.x, Riverpod 2, GoRouter 13 |
 | Backend | Firebase (Auth, Firestore, Functions, Storage, Messaging) |
-| Paiement | flutter_stripe 10.x |
+| Paiement | flutter_stripe 10.x (web) + in_app_purchase 3.x (iOS/Android) |
 | Navigation | go_router + ShellRoute (bottom nav) |
 | Charts | fl_chart |
 | Fonts | Google Fonts (Syne, DM Sans) |
@@ -110,6 +110,43 @@ flutter clean && flutter run
 
 # Générer les providers Riverpod
 dart run build_runner build --delete-conflicting-outputs
+```
+
+---
+
+## Architecture Paiement
+
+### Règle Apple / Google
+App Store Guideline 3.1.1 : les achats de biens numériques (crédits) **doivent** passer par Apple IAP (StoreKit) sur iOS et Google Play Billing sur Android. Stripe n'est autorisé que sur le web.
+
+### Implémentation
+- **Web** : `flutter_stripe` — `PaymentService` dans `services.dart` (guard `assert(kIsWeb)`)
+- **iOS/Android** : `in_app_purchase` — `IAPService` dans `services.dart`
+
+### IDs produits (à créer dans App Store Connect + Google Play Console)
+| ID | Crédits | Nom |
+|---|---|---|
+| `credits_starter` | 10 | Starter |
+| `credits_joueur` | 25 | Joueur |
+| `credits_pro` | 60 | Pro |
+| `credits_elite` | 150 | Elite |
+
+### Flux IAP
+1. `IAPService.loadProducts()` → charge les prix localisés depuis le store
+2. `IAPService.buyProduct(ProductDetails)` → initie l'achat
+3. `purchaseStream` → `_handlePurchases()` → appelle la Firebase Function `validateIAPPurchase`
+4. La Function vérifie le receipt et crédite le compte Firestore
+
+### Firebase Function à créer
+`validateIAPPurchase` — reçoit `{platform, productId, verificationData}`, vérifie le receipt Apple/Google, crédite les crédits dans Firestore.
+
+### main.dart
+Stripe initialisé uniquement si `kIsWeb` :
+```dart
+if (kIsWeb) {
+  Stripe.publishableKey = _stripePublishableKey;
+  await Stripe.instance.applySettings();
+}
 ```
 
 ---

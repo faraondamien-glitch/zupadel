@@ -1,9 +1,12 @@
+import 'dart:async';
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
+import 'package:in_app_purchase/in_app_purchase.dart';
 import '../models/models.dart';
 
 // ══════════════════════════════════════════════
@@ -526,16 +529,125 @@ final creditTransactionsProvider = StreamProvider<List<CreditTransaction>>((ref)
 });
 
 // ══════════════════════════════════════════════
-//  PAYMENT SERVICE (Stripe)
+//  IAP SERVICE — iOS + Android
+//  Apple In-App Purchase / Google Play Billing
+// ══════════════════════════════════════════════
+
+class IAPService {
+  final _iap       = InAppPurchase.instance;
+  final _functions = FirebaseFunctions.instanceFor(region: 'europe-west3');
+  StreamSubscription<List<PurchaseDetails>>? _subscription;
+  final _errorCtrl = StreamController<String>.broadcast();
+
+  /// Émettre les erreurs d'achat → écouter dans l'UI (CreditsScreen)
+  Stream<String> get purchaseErrors => _errorCtrl.stream;
+
+  /// IDs produits — doivent correspondre exactement à
+  /// App Store Connect (iOS) et Google Play Console (Android)
+  static const productIds = <String>{
+    'credits_starter', // 10 crédits
+    'credits_joueur',  // 25 crédits
+    'credits_pro',     // 60 crédits
+    'credits_elite',   // 150 crédits
+  };
+
+  /// Métadonnées locales associées à chaque product ID
+  static const meta = <String, ({int credits, String name, bool popular, bool gold})>{
+    'credits_starter': (credits: 10,  name: 'Starter', popular: false, gold: false),
+    'credits_joueur':  (credits: 25,  name: 'Joueur',  popular: true,  gold: false),
+    'credits_pro':     (credits: 60,  name: 'Pro',     popular: false, gold: false),
+    'credits_elite':   (credits: 150, name: 'Elite',   popular: false, gold: true),
+  };
+
+  void initialize() {
+    _subscription = _iap.purchaseStream.listen(
+      _handlePurchases,
+      onError: (e) => debugPrint('[IAP] stream error: $e'),
+    );
+  }
+
+  void dispose() {
+    _subscription?.cancel();
+    _errorCtrl.close();
+  }
+
+  /// Récupère les produits depuis le store (prix localisés)
+  Future<List<ProductDetails>> loadProducts() async {
+    final available = await _iap.isAvailable();
+    if (!available) return [];
+    final response = await _iap.queryProductDetails(productIds);
+    if (response.error != null) {
+      debugPrint('[IAP] queryProductDetails error: ${response.error}');
+    }
+    return response.productDetails
+      ..sort((a, b) => a.rawPrice.compareTo(b.rawPrice));
+  }
+
+  /// Lance l'achat d'un produit (affiche la sheet native du store)
+  Future<void> buyProduct(ProductDetails product) async {
+    final param = PurchaseParam(productDetails: product);
+    await _iap.buyConsumable(purchaseParam: param);
+  }
+
+  Future<void> _handlePurchases(List<PurchaseDetails> purchases) async {
+    for (final purchase in purchases) {
+      if (purchase.status == PurchaseStatus.pending) continue;
+
+      if (purchase.status == PurchaseStatus.purchased ||
+          purchase.status == PurchaseStatus.restored) {
+        // Valider côté serveur → Firebase Function crédite l'utilisateur
+        try {
+          await _functions.httpsCallable('validateIAPPurchase').call({
+            'productId':        purchase.productID,
+            'verificationData': purchase.verificationData.serverVerificationData,
+            'source':           purchase.verificationData.source,
+          });
+        } catch (e) {
+          debugPrint('[IAP] validation error: $e');
+          _errorCtrl.add('Erreur de validation. Contacte le support si les crédits n\'arrivent pas.');
+        }
+      } else if (purchase.status == PurchaseStatus.error) {
+        final msg = purchase.error?.message ?? 'Erreur inconnue';
+        // Ne pas afficher "annulé" comme une erreur
+        if (!msg.toLowerCase().contains('cancel') &&
+            !msg.toLowerCase().contains('user_cancel')) {
+          _errorCtrl.add('Erreur achat : $msg');
+        }
+      }
+
+      if (purchase.pendingCompletePurchase) {
+        await _iap.completePurchase(purchase);
+      }
+    }
+  }
+}
+
+final iapServiceProvider = Provider<IAPService>((ref) {
+  final service = IAPService();
+  if (!kIsWeb) service.initialize();
+  ref.onDispose(() => service.dispose());
+  return service;
+});
+
+/// Liste des produits disponibles (prix localisés depuis le store)
+final iapProductsProvider = FutureProvider<List<ProductDetails>>((ref) async {
+  if (kIsWeb) return [];
+  return ref.watch(iapServiceProvider).loadProducts();
+});
+
+// ══════════════════════════════════════════════
+//  PAYMENT SERVICE — Web uniquement (Stripe)
+//  Sur iOS/Android → utiliser IAPService
 // ══════════════════════════════════════════════
 
 class PaymentService {
   final _functions = FirebaseFunctions.instanceFor(region: 'europe-west3');
 
-  /// Lance le paiement Stripe pour un pack de crédits.
+  /// Web only — lance le Payment Sheet Stripe.
   /// Lève une [StripeException] si l'utilisateur annule.
   Future<void> buyCredits(String packId) async {
-    // 1. Crée le PaymentIntent côté serveur
+    assert(kIsWeb, 'PaymentService.buyCredits est réservé au web — utiliser IAPService sur mobile');
+
     final result = await _functions
         .httpsCallable('createPaymentIntent')
         .call({'packId': packId});
@@ -545,7 +657,6 @@ class PaymentService {
     final ephemeralKey = data['ephemeralKey'] as String;
     final customerId   = data['customerId'] as String;
 
-    // 2. Initialise le Payment Sheet
     await Stripe.instance.initPaymentSheet(
       paymentSheetParameters: SetupPaymentSheetParameters(
         paymentIntentClientSecret: clientSecret,
@@ -562,8 +673,6 @@ class PaymentService {
         ),
       ),
     );
-
-    // 3. Affiche le Payment Sheet → peut lancer StripeException si annulé
     await Stripe.instance.presentPaymentSheet();
   }
 }

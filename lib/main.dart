@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -39,9 +40,11 @@ void main() async {
   // Firebase
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
-  // Stripe
-  Stripe.publishableKey = _stripePublishableKey;
-  await Stripe.instance.applySettings();
+  // Stripe (web uniquement — iOS/Android utilisent Apple IAP / Google Play)
+  if (kIsWeb) {
+    Stripe.publishableKey = _stripePublishableKey;
+    await Stripe.instance.applySettings();
+  }
 
   // Notifications push
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
