@@ -114,31 +114,37 @@ void _handleNotificationTap(RemoteMessage message) {
 }
 
 Future<void> _initFcm() async {
-  final messaging = FirebaseMessaging.instance;
+  try {
+    final messaging = FirebaseMessaging.instance;
 
-  await messaging.requestPermission(
-    alert: true,
-    badge: true,
-    sound: true,
-  );
+    await messaging.requestPermission(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
 
-  final token = await messaging.getToken();
-  final user = FirebaseAuth.instance.currentUser;
-  if (token != null && user != null) {
-    await FirebaseFirestore.instance.collection('users').doc(user.uid).update({
-      'fcmToken': token,
-    });
-  }
-
-  // Rafraîchir le token si renouvelé
-  messaging.onTokenRefresh.listen((newToken) {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid != null) {
-      FirebaseFirestore.instance.collection('users').doc(uid).update({
-        'fcmToken': newToken,
+    // getToken() peut échouer sur simulateur (pas de certificat APNS) — on ignore
+    final token = await messaging.getToken().catchError((_) => null);
+    final user = FirebaseAuth.instance.currentUser;
+    if (token != null && user != null) {
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).update({
+        'fcmToken': token,
       });
     }
-  });
+
+    // Rafraîchir le token si renouvelé
+    messaging.onTokenRefresh.listen((newToken) {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid != null) {
+        FirebaseFirestore.instance.collection('users').doc(uid).update({
+          'fcmToken': newToken,
+        });
+      }
+    });
+  } catch (e) {
+    // FCM non disponible (simulateur sans APNS, permissions refusées, etc.)
+    debugPrint('FCM init skipped: $e');
+  }
 }
 
 class ZupadelApp extends ConsumerWidget {
