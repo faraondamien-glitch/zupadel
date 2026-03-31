@@ -527,6 +527,115 @@ export const updateStatsOnMatchFinish = onDocumentUpdated(
   }
 );
 
+// ══════════════════════════════════════════════
+//  ADMIN — RÔLES ET OPÉRATIONS SÉCURISÉES
+// ══════════════════════════════════════════════
+
+type CallableRequest = Parameters<Parameters<typeof onCall>[1]>[0];
+
+function assertAdmin(request: CallableRequest) {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Non authentifié");
+  if (!request.auth.token.admin) throw new HttpsError("permission-denied", "Accès refusé : rôle admin requis");
+}
+
+/** Attribue ou retire le rôle admin (custom claim).
+ *  Seul un admin existant peut appeler cette fonction.
+ *  Le premier admin doit être défini manuellement via Firebase Admin SDK ou la console. */
+export const setAdminClaim = onCall(
+  {region: "europe-west3"},
+  async (request) => {
+    assertAdmin(request);
+    const {uid, isAdmin} = request.data as {uid: string; isAdmin: boolean};
+    if (!uid) throw new HttpsError("invalid-argument", "uid requis");
+    await admin.auth().setCustomUserClaims(uid, {admin: isAdmin ?? true});
+    return {success: true};
+  }
+);
+
+export const adminBanUser = onCall(
+  {region: "europe-west3"},
+  async (request) => {
+    assertAdmin(request);
+    const {uid, ban} = request.data as {uid: string; ban: boolean};
+    if (!uid) throw new HttpsError("invalid-argument", "uid requis");
+    const db = getDb();
+    await db.collection("users").doc(uid).update({status: ban ? "banned" : "active"});
+    return {success: true};
+  }
+);
+
+export const adminAddCredits = onCall(
+  {region: "europe-west3"},
+  async (request) => {
+    assertAdmin(request);
+    const {uid, amount, description} = request.data as {uid: string; amount: number; description: string};
+    if (!uid || typeof amount !== "number" || amount <= 0) {
+      throw new HttpsError("invalid-argument", "uid, amount (>0) et description requis");
+    }
+    const db = getDb();
+    const userRef = db.collection("users").doc(uid);
+    const userDoc = await userRef.get();
+    const cur = (userDoc.data()?.credits as number) ?? 0;
+    const batch = db.batch();
+    batch.update(userRef, {credits: admin.firestore.FieldValue.increment(amount)});
+    batch.set(db.collection("creditTransactions").doc(), {
+      userId:        uid,
+      type:          "concours",
+      amount,
+      balanceBefore: cur,
+      balanceAfter:  cur + amount,
+      description:   description || "Ajout admin",
+      createdAt:     admin.firestore.FieldValue.serverTimestamp(),
+    });
+    await batch.commit();
+    return {success: true};
+  }
+);
+
+export const adminUpdateTournamentStatus = onCall(
+  {region: "europe-west3"},
+  async (request) => {
+    assertAdmin(request);
+    const {tournamentId, status} = request.data as {tournamentId: string; status: string};
+    const allowed = ["pending", "published", "refused"];
+    if (!tournamentId || !allowed.includes(status)) {
+      throw new HttpsError("invalid-argument", "tournamentId et status valide requis");
+    }
+    const db = getDb();
+    await db.collection("tournaments").doc(tournamentId).update({status});
+    return {success: true};
+  }
+);
+
+export const adminUpdateRegistrationStatus = onCall(
+  {region: "europe-west3"},
+  async (request) => {
+    assertAdmin(request);
+    const {registrationId, status} = request.data as {registrationId: string; status: string};
+    const allowed = ["pending", "accepted", "refused"];
+    if (!registrationId || !allowed.includes(status)) {
+      throw new HttpsError("invalid-argument", "registrationId et status valide requis");
+    }
+    const db = getDb();
+    await db.collection("tournamentRegistrations").doc(registrationId).update({status});
+    return {success: true};
+  }
+);
+
+export const adminUpdateCoachStatus = onCall(
+  {region: "europe-west3"},
+  async (request) => {
+    assertAdmin(request);
+    const {coachId, isActive} = request.data as {coachId: string; isActive: boolean};
+    if (!coachId || typeof isActive !== "boolean") {
+      throw new HttpsError("invalid-argument", "coachId et isActive requis");
+    }
+    const db = getDb();
+    await db.collection("coaches").doc(coachId).update({isActive});
+    return {success: true};
+  }
+);
+
 // ── Helpers ──────────────────────────────────────────────────────
 
 async function sendNotification(

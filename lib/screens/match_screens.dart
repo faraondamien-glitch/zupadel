@@ -21,12 +21,22 @@ class MatchListScreen extends ConsumerStatefulWidget {
 
 class _MatchListScreenState extends ConsumerState<MatchListScreen> {
   MatchType? _filterType;
-  bool _todayOnly = false;
+  bool _todayOnly    = false;
   int? _filterLevel;
+  bool _geoDisabled  = false; // "Voir tous les matchs" — désactive le filtre 30 km
+  final _searchCtrl  = TextEditingController();
+  String _search     = '';
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final matches = ref.watch(filteredMatchesProvider(
+    final posAsync = ref.watch(userPositionProvider);
+    final matches  = ref.watch(filteredMatchesProvider(
       MatchFilter(type: _filterType, todayOnly: _todayOnly, level: _filterLevel),
     ));
 
@@ -34,18 +44,56 @@ class _MatchListScreenState extends ConsumerState<MatchListScreen> {
       appBar: AppBar(
         title: const Text('Trouver un match'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.tune_rounded),
-            onPressed: _showFilters,
-          ),
+          // Indicateur GPS chargement
+          if (posAsync.isLoading)
+            const Padding(
+              padding: EdgeInsets.only(right: 12),
+              child: Center(
+                child: SizedBox(
+                  width: 16, height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: ZuTheme.accent),
+                ),
+              ),
+            )
+          else if (posAsync.valueOrNull != null && !_geoDisabled)
+            Padding(
+              padding: const EdgeInsets.only(right: 12),
+              child: Tooltip(
+                message: 'Filtre 30 km actif',
+                child: const Icon(Icons.location_on, color: ZuTheme.accent, size: 20),
+              ),
+            ),
         ],
       ),
       body: Column(
         children: [
+          // ── Barre de recherche ─────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: TextField(
+              controller: _searchCtrl,
+              onChanged: (v) => setState(() => _search = v.trim().toLowerCase()),
+              decoration: InputDecoration(
+                hintText: 'Rechercher un club...',
+                prefixIcon: const Icon(Icons.search, size: 20),
+                suffixIcon: _search.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, size: 18),
+                        onPressed: () {
+                          _searchCtrl.clear();
+                          setState(() => _search = '');
+                        },
+                      )
+                    : null,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              ),
+            ),
+          ),
+
           // ── Filter chips ──────────────────────────────────
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
             child: Row(
               children: [
                 _FilterChip(
@@ -89,28 +137,57 @@ class _MatchListScreenState extends ConsumerState<MatchListScreen> {
                 ),
               ),
               error: (e, _) => Center(child: Text('Erreur: $e')),
-              data: (list) => list.isEmpty
-                  ? ZuEmptyState(
-                      emoji: '🎾',
-                      title: 'Aucun match disponible',
-                      subtitle: 'Sois le premier à créer un match dans ta zone !',
-                      buttonLabel: 'Créer un match',
-                      onButton: () => context.go('/matches/create'),
-                    )
-                  : ListView.builder(
+              data: (list) {
+                // Filtre recherche
+                var filtered = _search.isEmpty
+                    ? list
+                    : list.where((m) =>
+                        m.club.toLowerCase().contains(_search) ||
+                        (m.city?.toLowerCase().contains(_search) ?? false)).toList();
+
+                // Filtre géo (si position disponible et non désactivé)
+                final pos = ref.watch(userPositionProvider).valueOrNull;
+                if (pos != null && !_geoDisabled) {
+                  filtered = filtered.where((m) {
+                    if (m.location == null) return true;
+                    return LocationService.withinRadius(m.location!, pos);
+                  }).toList();
+                }
+
+                if (filtered.isEmpty) {
+                  // Si filtre géo actif → proposer d'élargir
+                  if (pos != null && !_geoDisabled) {
+                    return ZuEmptyState(
+                      emoji: '📍',
+                      title: 'Aucun match à 30 km',
+                      subtitle: 'Pas de match dans ta zone pour le moment.',
+                      buttonLabel: 'Voir tous les matchs',
+                      onButton: () => setState(() => _geoDisabled = true),
+                    );
+                  }
+                  return ZuEmptyState(
+                    emoji: '🎾',
+                    title: 'Aucun match disponible',
+                    subtitle: 'Sois le premier à créer un match !',
+                    buttonLabel: 'Créer un match',
+                    onButton: () => context.go('/matches/create'),
+                  );
+                }
+                return ListView.builder(
                       padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
-                      itemCount: list.length,
+                      itemCount: filtered.length,
                       itemBuilder: (ctx, i) => Padding(
                         padding: const EdgeInsets.only(bottom: 12),
                         child: ZuMatchCard(
-                          match: list[i],
-                          onTap:  () => context.go('/matches/${list[i].id}'),
-                          onJoin: list[i].status == MatchStatus.open
-                              ? () => _joinMatch(ctx, list[i])
+                          match: filtered[i],
+                          onTap:  () => context.go('/matches/${filtered[i].id}'),
+                          onJoin: filtered[i].status == MatchStatus.open
+                              ? () => _joinMatch(ctx, filtered[i])
                               : null,
                         ),
                       ),
-                    ),
+                    );
+              },
             ),
           ),
         ],
@@ -1110,5 +1187,297 @@ class _MenuItem extends StatelessWidget {
     ),
     onTap: onTap,
     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+  );
+}
+
+// ══════════════════════════════════════════════
+//  TERMINER LE MATCH — SAISIE DU SCORE
+// ══════════════════════════════════════════════
+
+class FinishMatchScreen extends ConsumerStatefulWidget {
+  final String matchId;
+  const FinishMatchScreen({super.key, required this.matchId});
+
+  @override
+  ConsumerState<FinishMatchScreen> createState() => _FinishMatchScreenState();
+}
+
+class _FinishMatchScreenState extends ConsumerState<FinishMatchScreen> {
+  // Chaque set : [scoreTeam1, scoreTeam2]
+  final _sets = <(int, int)>[(6, 0)];
+  int _winnerTeam = 1; // 1 ou 2
+  bool _loading = false;
+
+  void _addSet() {
+    if (_sets.length >= 3) return;
+    setState(() => _sets.add((6, 0)));
+  }
+
+  void _removeSet(int i) {
+    if (_sets.length <= 1) return;
+    setState(() => _sets.removeAt(i));
+  }
+
+  String get _scoreString =>
+      _sets.map((s) => '${s.$1}-${s.$2}').join(' / ');
+
+  bool get _isValid {
+    // Le gagnant de chaque set doit atteindre 6 (ou 7 pour le super TB)
+    for (final s in _sets) {
+      final hi = s.$1 > s.$2 ? s.$1 : s.$2;
+      if (hi < 6) return false;
+    }
+    return true;
+  }
+
+  Future<void> _submit() async {
+    if (!_isValid) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Score invalide — le gagnant doit atteindre 6.')),
+      );
+      return;
+    }
+    setState(() => _loading = true);
+    try {
+      await ref.read(matchServiceProvider).finishMatch(
+        matchId:    widget.matchId,
+        score:      _scoreString,
+        winnerTeam: _winnerTeam,
+      );
+      if (mounted) {
+        context.go('/matches/${widget.matchId}');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Match terminé ! Les joueurs peuvent laisser un avis.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final matchAsync = ref.watch(matchDetailProvider(widget.matchId));
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Terminer le match')),
+      body: matchAsync.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error:   (e, _) => Center(child: Text('$e')),
+        data:    (match) {
+          if (match == null) return const Center(child: Text('Match introuvable'));
+          final players = match.playerIds;
+          final half    = (players.length / 2).ceil();
+          final t1Label = 'Équipe 1';
+          final t2Label = 'Équipe 2';
+
+          return ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              // Recap match
+              ZuCard(
+                child: Row(
+                  children: [
+                    const Text('🎾', style: TextStyle(fontSize: 24)),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(match.club, style: Theme.of(context).textTheme.headlineMedium),
+                          Text(
+                            DateFormat('d MMM à HH:mm', 'fr_FR').format(match.startTime),
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // Score set par set
+              ZuSectionTitle('Score par set'),
+              const SizedBox(height: 8),
+              ...List.generate(_sets.length, (i) => _SetRow(
+                index:     i,
+                t1:        _sets[i].$1,
+                t2:        _sets[i].$2,
+                canRemove: _sets.length > 1,
+                onRemove:  () => _removeSet(i),
+                onChangeT1: (v) => setState(() => _sets[i] = (v, _sets[i].$2)),
+                onChangeT2: (v) => setState(() => _sets[i] = (_sets[i].$1, v)),
+              )),
+              if (_sets.length < 3)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: TextButton.icon(
+                    onPressed: _addSet,
+                    icon: const Icon(Icons.add_circle_outline, size: 18),
+                    label: const Text('Ajouter un set'),
+                    style: TextButton.styleFrom(foregroundColor: ZuTheme.accent),
+                  ),
+                ),
+              const SizedBox(height: 20),
+
+              // Aperçu score
+              ZuCard(
+                borderColor: ZuTheme.accent.withOpacity(0.3),
+                child: Center(
+                  child: Text(
+                    _scoreString,
+                    style: GoogleFonts.syne(
+                      fontSize: 22, fontWeight: FontWeight.w800, color: ZuTheme.accent,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // Sélection de l'équipe gagnante
+              ZuSectionTitle('Équipe gagnante'),
+              const SizedBox(height: 8),
+              Row(
+                children: [1, 2].map((team) {
+                  final selected = _winnerTeam == team;
+                  final label    = team == 1 ? t1Label : t2Label;
+                  final subs     = team == 1
+                      ? players.sublist(0, half)
+                      : (players.length > half ? players.sublist(half) : <String>[]);
+                  return Expanded(
+                    child: Padding(
+                      padding: EdgeInsets.only(right: team == 1 ? 8 : 0),
+                      child: GestureDetector(
+                        onTap: () => setState(() => _winnerTeam = team),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 150),
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: selected ? ZuTheme.accent.withOpacity(0.15) : ZuTheme.bgCard,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: selected ? ZuTheme.accent : ZuTheme.borderColor,
+                              width: selected ? 2 : 1,
+                            ),
+                          ),
+                          child: Column(
+                            children: [
+                              if (selected)
+                                const Text('🏆', style: TextStyle(fontSize: 20)),
+                              Text(
+                                label,
+                                style: GoogleFonts.syne(
+                                  fontSize: 14, fontWeight: FontWeight.w700,
+                                  color: selected ? ZuTheme.accent : ZuTheme.textSecondary,
+                                ),
+                              ),
+                              Text(
+                                '${subs.length} joueur${subs.length > 1 ? 's' : ''}',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 24),
+              ZuButton(
+                label: 'Confirmer le résultat',
+                loading: _loading,
+                onPressed: _submit,
+              ),
+              const SizedBox(height: 40),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _SetRow extends StatelessWidget {
+  final int index, t1, t2;
+  final bool canRemove;
+  final VoidCallback onRemove;
+  final ValueChanged<int> onChangeT1;
+  final ValueChanged<int> onChangeT2;
+
+  const _SetRow({
+    required this.index, required this.t1, required this.t2,
+    required this.canRemove, required this.onRemove,
+    required this.onChangeT1, required this.onChangeT2,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: ZuCard(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          children: [
+            Text('Set ${index + 1}',
+              style: GoogleFonts.syne(fontSize: 12, fontWeight: FontWeight.w700,
+                color: ZuTheme.textSecondary)),
+            const SizedBox(width: 12),
+            _ScoreCounter(value: t1, label: 'Éq.1', onChanged: onChangeT1),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Text('–', style: GoogleFonts.syne(fontSize: 18, color: ZuTheme.textSecondary)),
+            ),
+            _ScoreCounter(value: t2, label: 'Éq.2', onChanged: onChangeT2),
+            const Spacer(),
+            if (canRemove)
+              GestureDetector(
+                onTap: onRemove,
+                child: const Icon(Icons.remove_circle_outline, color: ZuTheme.accentRed, size: 20),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ScoreCounter extends StatelessWidget {
+  final int value;
+  final String label;
+  final ValueChanged<int> onChanged;
+
+  const _ScoreCounter({required this.value, required this.label, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      Text(label, style: Theme.of(context).textTheme.bodySmall),
+      Row(
+        children: [
+          GestureDetector(
+            onTap: value > 0 ? () => onChanged(value - 1) : null,
+            child: Icon(Icons.remove_circle, size: 28,
+              color: value > 0 ? ZuTheme.accent : ZuTheme.borderColor),
+          ),
+          SizedBox(
+            width: 32,
+            child: Text(
+              '$value',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.syne(fontSize: 20, fontWeight: FontWeight.w800),
+            ),
+          ),
+          GestureDetector(
+            onTap: value < 7 ? () => onChanged(value + 1) : null,
+            child: Icon(Icons.add_circle, size: 28,
+              color: value < 7 ? ZuTheme.accent : ZuTheme.borderColor),
+          ),
+        ],
+      ),
+    ],
   );
 }

@@ -1,8 +1,8 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
+import { getFunctions } from "firebase/functions";
 
-// 🔧 Remplace par ta config Firebase (console.firebase.google.com → Paramètres du projet → Tes applications)
 const firebaseConfig = {
   apiKey: "AIzaSyBxvu8zHy98pFZ3Yh5ilNGOtOvDWSLEZjU",
   authDomain: "zupadel2.firebaseapp.com",
@@ -16,3 +16,4 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
+export const functions = getFunctions(app, "europe-west3");
