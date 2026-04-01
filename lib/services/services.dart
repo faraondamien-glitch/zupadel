@@ -1157,6 +1157,42 @@ final suggestedMatchesProvider = StreamProvider<List<ScoredMatch>>((ref) {
 });
 
 // ══════════════════════════════════════════════
+//  PLAYER MINI PROFILE (pour avatars dans les cards)
+// ══════════════════════════════════════════════
+
+/// Mini-profil léger pour affichage d'avatar dans les match cards.
+/// Mis en cache par Riverpod — un seul read Firestore par UID.
+class PlayerMini {
+  final String  firstName;
+  final String  lastName;
+  final String? photoUrl;
+
+  const PlayerMini({
+    required this.firstName,
+    required this.lastName,
+    this.photoUrl,
+  });
+
+  String get initials {
+    final f = firstName.isNotEmpty ? firstName[0].toUpperCase() : '';
+    final l = lastName.isNotEmpty  ? lastName[0].toUpperCase()  : '';
+    return '$f$l'.isEmpty ? '?' : '$f$l';
+  }
+}
+
+final playerMiniProvider = FutureProvider.family<PlayerMini?, String>((ref, uid) async {
+  if (uid.isEmpty) return null;
+  final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+  if (!doc.exists) return null;
+  final d = doc.data()!;
+  return PlayerMini(
+    firstName: d['firstName'] as String? ?? '',
+    lastName:  d['lastName']  as String? ?? '',
+    photoUrl:  d['photoUrl']  as String?,
+  );
+});
+
+// ══════════════════════════════════════════════
 //  USER STATS
 // ══════════════════════════════════════════════
 

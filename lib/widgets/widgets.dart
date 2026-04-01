@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../theme/zu_theme.dart';
 import '../models/models.dart';
+import '../services/services.dart';
 import 'package:intl/intl.dart';
 
 // ─── ZuCard ─────────────────────────────────────────────────────
@@ -305,7 +307,7 @@ class _ZuStarRatingState extends State<ZuStarRating> {
 
 // ─── ZuPlayerSlots ──────────────────────────────────────────────
 
-class ZuPlayerSlots extends StatelessWidget {
+class ZuPlayerSlots extends ConsumerWidget {
   final int maxPlayers;
   final List<String> playerIds;
   final double avatarSize;
@@ -318,7 +320,7 @@ class ZuPlayerSlots extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final stackWidth = maxPlayers <= 0
         ? 0.0
         : (maxPlayers - 1) * (avatarSize * 0.72) + avatarSize;
@@ -328,28 +330,40 @@ class ZuPlayerSlots extends StatelessWidget {
       child: Stack(
         children: List.generate(maxPlayers, (i) {
           final filled = i < playerIds.length;
+          if (!filled) {
+            return Positioned(
+              left: i * (avatarSize * 0.72),
+              child: Container(
+                width: avatarSize,
+                height: avatarSize,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(avatarSize / 2),
+                  border: Border.all(
+                    color: ZuTheme.accent.withOpacity(0.3),
+                    style: BorderStyle.solid,
+                    width: 1.5,
+                  ),
+                  color: ZuTheme.accent.withOpacity(0.04),
+                ),
+                child: Icon(Icons.person_add_alt, size: 14, color: ZuTheme.accent.withOpacity(0.4)),
+              ),
+            );
+          }
+          final uid   = playerIds[i];
+          final mini  = ref.watch(playerMiniProvider(uid)).valueOrNull;
           return Positioned(
             left: i * (avatarSize * 0.72),
-            child: filled
-                ? ZuAvatar(
-                    initials: '?',
-                    size: avatarSize,
-                    bgColor: _colors[i % _colors.length],
-                  )
-                : Container(
-                    width: avatarSize,
-                    height: avatarSize,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(avatarSize / 2),
-                      border: Border.all(
-                        color: ZuTheme.accent.withOpacity(0.3),
-                        style: BorderStyle.solid,
-                        width: 1.5,
-                      ),
-                      color: ZuTheme.accent.withOpacity(0.04),
-                    ),
-                    child: Icon(Icons.add, size: 14, color: ZuTheme.accent.withOpacity(0.4)),
-                  ),
+            child: Tooltip(
+              message: mini != null
+                  ? '${mini.firstName} ${mini.lastName}'.trim()
+                  : '',
+              child: ZuAvatar(
+                photoUrl: mini?.photoUrl,
+                initials: mini?.initials ?? '?',
+                size: avatarSize,
+                bgColor: _colors[i % _colors.length],
+              ),
+            ),
           );
         }),
       ),

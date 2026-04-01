@@ -21,18 +21,43 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   bool _togglingAvail = false;
 
   Future<void> _toggleAvailability(UserAvailability? current) async {
-    setState(() => _togglingAvail = true);
-    try {
-      final svc = ref.read(matchmakingServiceProvider);
-      await svc.setAvailability(available: !(current?.isStillValid ?? false));
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+    final isCurrentlyAvail = current?.isStillValid ?? false;
+
+    if (!isCurrentlyAvail) {
+      // Activation → choisir la durée d'abord
+      final hours = await showModalBottomSheet<int>(
+        context: context,
+        backgroundColor: ZuTheme.bgCard,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        builder: (_) => const _DispoPickerSheet(),
+      );
+      if (hours == null) return; // annulé
+      setState(() => _togglingAvail = true);
+      try {
+        await ref.read(matchmakingServiceProvider)
+            .setAvailability(available: true, hours: hours);
+      } catch (e) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Erreur : $e')),
         );
+      } finally {
+        if (mounted) setState(() => _togglingAvail = false);
       }
-    } finally {
-      if (mounted) setState(() => _togglingAvail = false);
+    } else {
+      // Désactivation → immédiate, pas besoin de bottom sheet
+      setState(() => _togglingAvail = true);
+      try {
+        await ref.read(matchmakingServiceProvider)
+            .setAvailability(available: false);
+      } catch (e) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur : $e')),
+        );
+      } finally {
+        if (mounted) setState(() => _togglingAvail = false);
+      }
     }
   }
 
@@ -261,6 +286,100 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 }
 
+// ─── Bottom sheet — choix durée disponibilité ───────────────────
+
+class _DispoPickerSheet extends StatefulWidget {
+  const _DispoPickerSheet();
+
+  @override
+  State<_DispoPickerSheet> createState() => _DispoPickerSheetState();
+}
+
+class _DispoPickerSheetState extends State<_DispoPickerSheet> {
+  int _selected = 3;
+
+  static const _options = [
+    (hours: 1,  label: '1 heure',   sublabel: 'Pour un match rapide'),
+    (hours: 3,  label: '3 heures',  sublabel: 'Le plus courant'),
+    (hours: 8,  label: '8 heures',  sublabel: 'Toute la journée'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 24, 20, 40),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Pendant combien de temps ?',
+            style: Theme.of(context).textTheme.displaySmall),
+          const SizedBox(height: 4),
+          Text(
+            'Tu resteras visible pour les matchs compatibles pendant cette durée.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 20),
+          ..._options.map((opt) => Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: GestureDetector(
+              onTap: () => setState(() => _selected = opt.hours),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                decoration: BoxDecoration(
+                  color: _selected == opt.hours
+                      ? ZuTheme.accent.withOpacity(0.12)
+                      : ZuTheme.bgPrimary,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: _selected == opt.hours
+                        ? ZuTheme.accent
+                        : ZuTheme.borderColor,
+                    width: _selected == opt.hours ? 1.5 : 1,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(opt.label,
+                            style: GoogleFonts.syne(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: _selected == opt.hours
+                                  ? ZuTheme.accent
+                                  : ZuTheme.textPrimary,
+                            )),
+                          const SizedBox(height: 2),
+                          Text(opt.sublabel,
+                            style: GoogleFonts.dmSans(
+                              fontSize: 12,
+                              color: ZuTheme.textSecondary,
+                            )),
+                        ],
+                      ),
+                    ),
+                    if (_selected == opt.hours)
+                      Icon(Icons.check_circle, color: ZuTheme.accent, size: 20),
+                  ],
+                ),
+              ),
+            ),
+          )),
+          const SizedBox(height: 8),
+          ZuButton(
+            label: 'Je suis dispo — $_selected h',
+            onPressed: () => Navigator.pop(context, _selected),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 // ─── Hero Header ────────────────────────────────────────────────
 
 class _HeroHeader extends StatelessWidget {
@@ -335,57 +454,72 @@ class _HeroHeader extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
             // ── Toggle disponibilité ─────────────────────────
-            GestureDetector(
-              onTap: togglingAvail ? null : onToggleAvail,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 250),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                decoration: BoxDecoration(
-                  color: isAvail
-                      ? ZuTheme.accent.withOpacity(0.15)
-                      : ZuTheme.bgCard,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: isAvail ? ZuTheme.accent : ZuTheme.borderColor,
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 250),
+              padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
+              decoration: BoxDecoration(
+                color: isAvail
+                    ? ZuTheme.accent.withOpacity(0.12)
+                    : ZuTheme.bgCard,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: isAvail ? ZuTheme.accent.withOpacity(0.5) : ZuTheme.borderColor,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.bolt,
+                    size: 18,
+                    color: isAvail ? ZuTheme.accent : ZuTheme.textSecondary,
                   ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (togglingAvail)
-                      const SizedBox(
-                        width: 14, height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    else
-                      Icon(
-                        isAvail ? Icons.bolt : Icons.bolt_outlined,
-                        size: 16,
-                        color: isAvail ? ZuTheme.accent : ZuTheme.textSecondary,
-                      ),
-                    const SizedBox(width: 6),
-                    Text(
-                      isAvail ? 'Disponible pour jouer' : 'Je suis disponible',
-                      style: GoogleFonts.dmSans(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: isAvail ? ZuTheme.accent : ZuTheme.textSecondary,
-                      ),
-                    ),
-                    if (isAvail && avail != null) ...[
-                      const SizedBox(width: 6),
-                      Text(
-                        '· expire ${_formatExpiry(avail!.expiresAt)}',
-                        style: GoogleFonts.dmSans(
-                          fontSize: 11,
-                          color: ZuTheme.textSecondary,
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Je suis disponible',
+                          style: GoogleFonts.dmSans(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: isAvail ? ZuTheme.accent : ZuTheme.textPrimary,
+                          ),
                         ),
-                      ),
-                    ],
-                  ],
-                ),
+                        if (isAvail && avail != null)
+                          Text(
+                            'Expire ${_formatExpiry(avail!.expiresAt)}',
+                            style: GoogleFonts.dmSans(
+                              fontSize: 11,
+                              color: ZuTheme.textSecondary,
+                            ),
+                          )
+                        else
+                          Text(
+                            'Active pour trouver un match',
+                            style: GoogleFonts.dmSans(
+                              fontSize: 11,
+                              color: ZuTheme.textSecondary,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  if (togglingAvail)
+                    const SizedBox(
+                      width: 20, height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  else
+                    Switch(
+                      value: isAvail,
+                      onChanged: (_) => onToggleAvail(),
+                      activeColor: ZuTheme.accent,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                ],
               ),
             ),
           ],
