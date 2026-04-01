@@ -431,21 +431,205 @@ export const onMatchCreated = onDocumentCreated(
     const match = event.data?.data();
     if (!match) return;
     if (match.visibility !== "public") return;
-    const usersSnap = await db.collection("users")
-      .where("level", ">=", match.levelMin - 1)
-      .where("level", "<=", match.levelMax + 1)
+
+    const matchId      = event.params.matchId;
+    const organizerId  = match.organizerId as string;
+    const matchLat     = match.location?._lat  as number | undefined;
+    const matchLng     = match.location?._long as number | undefined;
+    const now          = new Date();
+
+    // Cherche les joueurs disponibles avec le bon niveau
+    const availSnap = await db.collection("userAvailability")
+      .where("isAvailable", "==", true)
+      .where("expiresAt",   ">",  admin.firestore.Timestamp.fromDate(now))
+      .where("level",       ">=", match.levelMin - 1)
+      .where("level",       "<=", match.levelMax + 1)
       .get();
-    const organizerId = match.organizerId;
-    const notifications = usersSnap.docs
-      .filter((doc) => doc.id !== organizerId)
-      .map((doc) => sendNotification(doc.id, {
+
+    // Filtre par distance (30 km) si le match a une localisation
+    const candidates = availSnap.docs.filter((doc) => {
+      if (doc.id === organizerId) return false;
+      if (!matchLat || !matchLng) return true; // pas de filtre geo si match sans location
+      const loc = doc.data().location;
+      if (!loc) return true; // inclus si l'user n'a pas de location
+      const dist = haversineKm(matchLat, matchLng, loc._lat as number, loc._long as number);
+      return dist <= 30;
+    });
+
+    let notifiedCount = 0;
+    const notifications = candidates.map(async (doc) => {
+      await sendNotification(doc.id, {
         title: "Nouveau match près de toi ! 🎾",
-        body: `${match.club} · Niveau ${match.levelMin}-${match.levelMax}`,
-        data: {matchId: event.params.matchId},
-      }));
+        body:  `${match.club} · Niveau ${match.levelMin}-${match.levelMax}`,
+        data:  {matchId},
+      });
+      notifiedCount++;
+    });
     await Promise.allSettled(notifications);
+
+    // Enregistre le nombre de joueurs notifiés pour affichage dans l'app
+    if (notifiedCount > 0) {
+      await db.collection("matches").doc(matchId).update({
+        notifiedCount: notifiedCount,
+      });
+    }
   }
 );
+
+// ─── MATCHMAKING CALLABLES ────────────────────────────────────────
+
+/** Définit la disponibilité de l'utilisateur courant. */
+export const setUserAvailability = onCall(
+  {region: "europe-west3"},
+  async (req: CallableRequest) => {
+    const uid = req.auth?.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "Login required");
+
+    const {available, hours = 3} = req.data as {available: boolean; hours?: number};
+    const db = getDb();
+
+    const expiresAt = new Date(Date.now() + hours * 3600 * 1000);
+    await db.collection("userAvailability").doc(uid).set({
+      isAvailable: available,
+      expiresAt:   admin.firestore.Timestamp.fromDate(expiresAt),
+      updatedAt:   admin.firestore.FieldValue.serverTimestamp(),
+    }, {merge: true});
+
+    return {success: true};
+  }
+);
+
+/** Retourne les top 10 joueurs les mieux scorés pour un match donné. */
+export const getMatchSuggestions = onCall(
+  {region: "europe-west3"},
+  async (req: CallableRequest) => {
+    const uid = req.auth?.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "Login required");
+
+    const {matchId} = req.data as {matchId: string};
+    const db = getDb();
+
+    const matchDoc = await db.collection("matches").doc(matchId).get();
+    if (!matchDoc.exists) throw new HttpsError("not-found", "Match not found");
+    const match = matchDoc.data()!;
+
+    const matchLat = match.location?._lat  as number | undefined;
+    const matchLng = match.location?._long as number | undefined;
+    const now      = new Date();
+
+    // Joueurs disponibles du bon niveau
+    const availSnap = await db.collection("userAvailability")
+      .where("isAvailable", "==", true)
+      .where("expiresAt",   ">",  admin.firestore.Timestamp.fromDate(now))
+      .where("level",       ">=", match.levelMin - 1)
+      .where("level",       "<=", match.levelMax + 1)
+      .get();
+
+    // Exclut les joueurs déjà dans le match
+    const playerIds: string[] = match.playerIds || [];
+    const alreadyIn = new Set(playerIds);
+
+    const scored = availSnap.docs
+      .filter((d) => !alreadyIn.has(d.id))
+      .map((d) => {
+        const data = d.data();
+        let score = 0;
+
+        // Level score (0–50)
+        const level = data.level as number;
+        if (level >= match.levelMin && level <= match.levelMax) score += 50;
+        else score += 25; // niveau adjacent
+
+        // Distance score (0–30)
+        const loc = data.location;
+        if (loc && matchLat && matchLng) {
+          const dist = haversineKm(matchLat, matchLng, loc._lat as number, loc._long as number);
+          if (dist < 3)       score += 30;
+          else if (dist < 10) score += 20;
+          else if (dist < 20) score += 10;
+          else if (dist < 30) score += 5;
+        }
+
+        // Availability bonus (20)
+        score += 20;
+
+        return {uid: d.id, score};
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10);
+
+    // Récupère les profils des joueurs suggérés
+    const profiles = await Promise.all(
+      scored.map(async ({uid: suggestedUid, score}) => {
+        const userDoc = await db.collection("users").doc(suggestedUid).get();
+        const u = userDoc.data() || {};
+        return {
+          uid:       suggestedUid,
+          firstName: u.firstName || "",
+          lastName:  u.lastName  || "",
+          level:     u.level     || 1,
+          photoUrl:  u.photoUrl  || null,
+          score,
+        };
+      })
+    );
+
+    return {suggestions: profiles};
+  }
+);
+
+/** Invite un joueur spécifique à rejoindre un match. */
+export const invitePlayerToMatch = onCall(
+  {region: "europe-west3"},
+  async (req: CallableRequest) => {
+    const uid = req.auth?.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "Login required");
+
+    const {matchId, invitedUid} = req.data as {matchId: string; invitedUid: string};
+    const db = getDb();
+
+    const matchDoc = await db.collection("matches").doc(matchId).get();
+    if (!matchDoc.exists) throw new HttpsError("not-found", "Match not found");
+    const match = matchDoc.data()!;
+
+    if (match.organizerId !== uid) {
+      throw new HttpsError("permission-denied", "Only organizer can invite");
+    }
+
+    // Crée l'invitation
+    await db.collection("matchInvitations").add({
+      matchId,
+      fromUid:   uid,
+      toUid:     invitedUid,
+      status:    "pending",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    // Notifie le joueur invité
+    const organizerDoc = await db.collection("users").doc(uid).get();
+    const organizer    = organizerDoc.data() || {};
+    const firstName    = organizer.firstName || "Un joueur";
+
+    await sendNotification(invitedUid, {
+      title: "Tu as été invité ! 🎾",
+      body:  `${firstName} t'invite à rejoindre un match à ${match.club}`,
+      data:  {matchId, type: "invitation"},
+    });
+
+    return {success: true};
+  }
+);
+
+// ─── Haversine ────────────────────────────────────────────────────
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R  = 6371;
+  const dL = (lat2 - lat1) * Math.PI / 180;
+  const dG = (lng2 - lng1) * Math.PI / 180;
+  const a  = Math.sin(dL / 2) ** 2 +
+             Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+             Math.sin(dG / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
 
 export const onMatchCancelled = onDocumentUpdated(
   {document: "matches/{matchId}", region: "europe-west3"},

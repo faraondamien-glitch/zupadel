@@ -8,24 +8,118 @@ import '../models/models.dart';
 import '../widgets/widgets.dart';
 import '../services/services.dart';
 
-class HomeScreen extends ConsumerWidget {
+class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final user    = ref.watch(currentUserProvider);
-    final matches = ref.watch(nearbyMatchesProvider);
+  ConsumerState<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends ConsumerState<HomeScreen> {
+  bool _togglingAvail = false;
+
+  Future<void> _toggleAvailability(UserAvailability? current) async {
+    setState(() => _togglingAvail = true);
+    try {
+      final svc = ref.read(matchmakingServiceProvider);
+      await svc.setAvailability(available: !(current?.isStillValid ?? false));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur : $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _togglingAvail = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final user      = ref.watch(currentUserProvider);
+    final matches   = ref.watch(nearbyMatchesProvider);
+    final avail     = ref.watch(availabilityProvider).valueOrNull;
+    final suggested = ref.watch(suggestedMatchesProvider);
 
     return Scaffold(
       backgroundColor: ZuTheme.bgPrimary,
       body: CustomScrollView(
         slivers: [
           // ── AppBar Hero ──────────────────────────────────────
-          SliverToBoxAdapter(child: _HeroHeader(user: user)),
+          SliverToBoxAdapter(
+            child: _HeroHeader(
+              user:             user,
+              avail:            avail,
+              togglingAvail:    _togglingAvail,
+              onToggleAvail:    () => _toggleAvailability(avail),
+            ),
+          ),
+
+          // ── Section : Matchs pour toi (matchmaking) ──────────
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+            sliver: SliverToBoxAdapter(
+              child: ZuSectionTitle(
+                'Matchs pour toi',
+                action: (avail?.isStillValid ?? false)
+                    ? null
+                    : TextButton(
+                        onPressed: () => _toggleAvailability(avail),
+                        child: Text(
+                          'Je suis dispo',
+                          style: GoogleFonts.syne(fontSize: 12, color: ZuTheme.accent),
+                        ),
+                      ),
+              ),
+            ),
+          ),
+
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            sliver: suggested.when(
+              loading: () => SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (_, __) => const Padding(
+                    padding: EdgeInsets.only(bottom: 12),
+                    child: ZuShimmerCard(),
+                  ),
+                  childCount: 2,
+                ),
+              ),
+              error: (_, __) => const SliverToBoxAdapter(child: SizedBox.shrink()),
+              data: (list) => list.isEmpty
+                  ? SliverToBoxAdapter(
+                      child: ZuCard(
+                        child: Text(
+                          'Active ta disponibilité pour voir les matchs compatibles avec ton niveau.',
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: ZuTheme.textSecondary),
+                        ),
+                      ),
+                    )
+                  : SliverList(
+                      delegate: SliverChildBuilderDelegate(
+                        (ctx, i) {
+                          final sm = list[i];
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: _ScoredMatchCard(
+                              scored: sm,
+                              onTap:  () => context.go('/matches/${sm.match.id}'),
+                              onJoin: sm.match.status == MatchStatus.open
+                                  ? () => _handleJoin(ctx, sm.match)
+                                  : null,
+                            ),
+                          );
+                        },
+                        childCount: list.take(5).length,
+                      ),
+                    ),
+            ),
+          ),
 
           // ── Section : Match à proximité ──────────────────────
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
             sliver: SliverToBoxAdapter(
               child: ZuSectionTitle(
                 'Matchs près de toi',
@@ -77,7 +171,7 @@ class HomeScreen extends ConsumerWidget {
                             match: list[i],
                             onTap:  () => context.go('/matches/${list[i].id}'),
                             onJoin: list[i].status == MatchStatus.open
-                                ? () => _handleJoin(ctx, ref, list[i])
+                                ? () => _handleJoin(ctx, list[i])
                                 : null,
                           ),
                         ),
@@ -128,17 +222,17 @@ class HomeScreen extends ConsumerWidget {
     );
   }
 
-  void _handleJoin(BuildContext context, WidgetRef ref, ZuMatch match) {
+  void _handleJoin(BuildContext context, ZuMatch match) {
     final user = ref.read(currentUserProvider).valueOrNull;
     if (user == null) return;
     if (user.credits < 1) {
       _showInsufficientCreditsDialog(context);
       return;
     }
-    _showJoinConfirmDialog(context, ref, match);
+    _showJoinConfirmDialog(context, match);
   }
 
-  void _showJoinConfirmDialog(BuildContext context, WidgetRef ref, ZuMatch match) {
+  void _showJoinConfirmDialog(BuildContext context, ZuMatch match) {
     showModalBottomSheet(
       context: context,
       backgroundColor: ZuTheme.bgCard,
@@ -172,11 +266,21 @@ class HomeScreen extends ConsumerWidget {
 
 class _HeroHeader extends StatelessWidget {
   final AsyncValue<ZuUser?> user;
+  final UserAvailability?   avail;
+  final bool                togglingAvail;
+  final VoidCallback        onToggleAvail;
 
-  const _HeroHeader({required this.user});
+  const _HeroHeader({
+    required this.user,
+    required this.avail,
+    required this.togglingAvail,
+    required this.onToggleAvail,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final isAvail = avail?.isStillValid ?? false;
+
     return Container(
       decoration: BoxDecoration(
         gradient: const LinearGradient(
@@ -190,46 +294,181 @@ class _HeroHeader extends StatelessWidget {
       child: user.when(
         loading: () => const SizedBox(height: 72),
         error: (_, __) => const SizedBox(height: 72),
-        data: (u) => Row(
+        data: (u) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Bonjour 👋',
-                    style: GoogleFonts.dmSans(fontSize: 13, color: ZuTheme.textSecondary),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    u?.displayName ?? 'Joueur',
-                    style: GoogleFonts.syne(fontSize: 22, fontWeight: FontWeight.w800, color: ZuTheme.textPrimary),
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      ZuCreditChip(
-                        credits: u?.credits ?? 0,
-                        onTap: () => context.go('/credits'),
+                      Text(
+                        'Bonjour 👋',
+                        style: GoogleFonts.dmSans(fontSize: 13, color: ZuTheme.textSecondary),
                       ),
-                      const SizedBox(width: 10),
-                      ZuTag('Niveau ${u?.level ?? 1}', style: ZuTagStyle.green),
+                      const SizedBox(height: 2),
+                      Text(
+                        u?.displayName ?? 'Joueur',
+                        style: GoogleFonts.syne(fontSize: 22, fontWeight: FontWeight.w800, color: ZuTheme.textPrimary),
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          ZuCreditChip(
+                            credits: u?.credits ?? 0,
+                            onTap: () => context.go('/credits'),
+                          ),
+                          const SizedBox(width: 10),
+                          ZuTag('Niveau ${u?.level ?? 1}', style: ZuTagStyle.green),
+                        ],
+                      ),
                     ],
                   ),
-                ],
-              ),
+                ),
+                GestureDetector(
+                  onTap: () => context.go('/profile'),
+                  child: ZuAvatar(
+                    photoUrl: u?.photoUrl,
+                    initials: u?.initials ?? 'ZP',
+                    size: 48,
+                  ),
+                ),
+              ],
             ),
+            const SizedBox(height: 14),
+            // ── Toggle disponibilité ─────────────────────────
             GestureDetector(
-              onTap: () => context.go('/profile'),
-              child: ZuAvatar(
-                photoUrl: u?.photoUrl,
-                initials: u?.initials ?? 'ZP',
-                size: 48,
+              onTap: togglingAvail ? null : onToggleAvail,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 250),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: isAvail
+                      ? ZuTheme.accent.withOpacity(0.15)
+                      : ZuTheme.bgCard,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: isAvail ? ZuTheme.accent : ZuTheme.borderColor,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (togglingAvail)
+                      const SizedBox(
+                        width: 14, height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    else
+                      Icon(
+                        isAvail ? Icons.bolt : Icons.bolt_outlined,
+                        size: 16,
+                        color: isAvail ? ZuTheme.accent : ZuTheme.textSecondary,
+                      ),
+                    const SizedBox(width: 6),
+                    Text(
+                      isAvail ? 'Disponible pour jouer' : 'Je suis disponible',
+                      style: GoogleFonts.dmSans(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: isAvail ? ZuTheme.accent : ZuTheme.textSecondary,
+                      ),
+                    ),
+                    if (isAvail && avail != null) ...[
+                      const SizedBox(width: 6),
+                      Text(
+                        '· expire ${_formatExpiry(avail!.expiresAt)}',
+                        style: GoogleFonts.dmSans(
+                          fontSize: 11,
+                          color: ZuTheme.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
               ),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  String _formatExpiry(DateTime dt) {
+    final diff = dt.difference(DateTime.now());
+    if (diff.inMinutes < 60) return 'dans ${diff.inMinutes} min';
+    return 'dans ${diff.inHours}h';
+  }
+}
+
+// ─── Scored Match Card ──────────────────────────────────────────
+
+class _ScoredMatchCard extends StatelessWidget {
+  final ScoredMatch scored;
+  final VoidCallback? onTap;
+  final VoidCallback? onJoin;
+
+  const _ScoredMatchCard({required this.scored, this.onTap, this.onJoin});
+
+  @override
+  Widget build(BuildContext context) {
+    final m = scored.match;
+    return ZuMatchCard(
+      match:        m,
+      onTap:        onTap,
+      onJoin:       onJoin,
+      trailingBadge: _ScoreBadge(
+        score:      scored.score,
+        distanceKm: scored.distanceKm,
+        levelMatch: scored.levelMatch,
+      ),
+    );
+  }
+}
+
+class _ScoreBadge extends StatelessWidget {
+  final int score;
+  final double? distanceKm;
+  final bool levelMatch;
+
+  const _ScoreBadge({required this.score, this.distanceKm, required this.levelMatch});
+
+  @override
+  Widget build(BuildContext context) {
+    Color color;
+    if (score >= 80)      color = ZuTheme.accent;
+    else if (score >= 50) color = Colors.orange;
+    else                  color = ZuTheme.textSecondary;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color:        color.withOpacity(0.15),
+            borderRadius: BorderRadius.circular(8),
+            border:       Border.all(color: color.withOpacity(0.4)),
+          ),
+          child: Text(
+            '$score pts',
+            style: GoogleFonts.syne(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
+          ),
+        ),
+        if (distanceKm != null) ...[
+          const SizedBox(height: 4),
+          Text(
+            '${distanceKm!.toStringAsFixed(1)} km',
+            style: GoogleFonts.dmSans(fontSize: 10, color: ZuTheme.textSecondary),
+          ),
+        ],
+      ],
     );
   }
 }

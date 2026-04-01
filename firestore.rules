@@ -86,5 +86,21 @@ service cloud.firestore {
     match /iapReceipts/{receiptId} {
       allow read, write: if false; // Cloud Functions uniquement
     }
+
+    // ── Disponibilité joueurs (matchmaking) ──────────────────
+    match /userAvailability/{uid} {
+      allow read: if isAuth();
+      allow write: if isOwner(uid);
+    }
+
+    // ── Invitations de match ─────────────────────────────────
+    match /matchInvitations/{invId} {
+      allow read: if isAuth() && (
+        request.auth.uid == resource.data.fromUid ||
+        request.auth.uid == resource.data.toUid
+      );
+      // Créées uniquement via Cloud Function (invitePlayerToMatch)
+      allow write: if false;
+    }
   }
 }

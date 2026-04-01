@@ -771,6 +771,14 @@ class MatchDetailScreen extends ConsumerWidget {
                 const SizedBox(height: 16),
               ],
 
+              // Joueurs suggérés (organisateur, match pas plein)
+              if (isOrganizer && match.status == MatchStatus.open && !match.isFull) ...[
+                ZuSectionTitle('Joueurs suggérés'),
+                const SizedBox(height: 8),
+                _SuggestedPlayersSection(matchId: matchId),
+                const SizedBox(height: 16),
+              ],
+
               // Actions
               if (match.status == MatchStatus.open && !isPlayer && !isOrganizer)
                 ZuButton(
@@ -1003,6 +1011,126 @@ class _PostMatchReviewScreenState extends ConsumerState<PostMatchReviewScreen> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+}
+
+// ─── Joueurs suggérés ────────────────────────────────────────────
+
+class _SuggestedPlayersSection extends ConsumerStatefulWidget {
+  final String matchId;
+  const _SuggestedPlayersSection({required this.matchId});
+
+  @override
+  ConsumerState<_SuggestedPlayersSection> createState() => _SuggestedPlayersSectionState();
+}
+
+class _SuggestedPlayersSectionState extends ConsumerState<_SuggestedPlayersSection> {
+  bool _loading = true;
+  String? _error;
+  List<Map<String, dynamic>> _suggestions = [];
+  final Set<String> _invited = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSuggestions();
+  }
+
+  Future<void> _loadSuggestions() async {
+    try {
+      final result = await ref.read(matchmakingServiceProvider)
+          .getMatchSuggestions(widget.matchId);
+      if (mounted) {
+        setState(() {
+          _suggestions = result;
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() { _error = e.toString(); _loading = false; });
+    }
+  }
+
+  Future<void> _invite(String uid) async {
+    setState(() => _invited.add(uid));
+    try {
+      await ref.read(matchmakingServiceProvider)
+          .invitePlayer(matchId: widget.matchId, invitedUid: uid);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _invited.remove(uid));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur : $e')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_error != null) return const SizedBox.shrink();
+    if (_suggestions.isEmpty) {
+      return ZuCard(
+        child: Text(
+          'Aucun joueur disponible compatible pour l\'instant.',
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: ZuTheme.textSecondary),
+        ),
+      );
+    }
+
+    return Column(
+      children: _suggestions.map((s) {
+        final uid       = s['uid'] as String;
+        final firstName = s['firstName'] as String? ?? '';
+        final lastName  = s['lastName'] as String? ?? '';
+        final level     = s['level'] as int? ?? 1;
+        final photoUrl  = s['photoUrl'] as String?;
+        final score     = s['score'] as int? ?? 0;
+        final invited   = _invited.contains(uid);
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: ZuCard(
+            child: Row(
+              children: [
+                ZuAvatar(
+                  photoUrl:  photoUrl,
+                  initials:  '${firstName.isNotEmpty ? firstName[0] : '?'}${lastName.isNotEmpty ? lastName[0] : ''}',
+                  size: 36,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '$firstName $lastName',
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                      Text(
+                        'Niveau $level · $score pts de compatibilité',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                if (invited)
+                  ZuTag('Invité', style: ZuTagStyle.green)
+                else
+                  TextButton(
+                    onPressed: () => _invite(uid),
+                    child: Text(
+                      'Inviter',
+                      style: GoogleFonts.syne(fontSize: 12, color: ZuTheme.accent),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      }).toList(),
+    );
   }
 }
 

@@ -25,6 +25,7 @@ class ZuUser {
   final String? fftLicense;
   final String? fftRank;     // P25, P100, P250...
   final GeoPoint? location;
+  final GeoPoint? lastKnownLocation;
   final String? city;
   final int credits;
   final String referralCode;
@@ -41,6 +42,7 @@ class ZuUser {
     this.fftLicense,
     this.fftRank,
     this.location,
+    this.lastKnownLocation,
     this.city,
     required this.credits,
     required this.referralCode,
@@ -64,45 +66,50 @@ class ZuUser {
   factory ZuUser.fromFirestore(DocumentSnapshot doc) {
     final d = doc.data() as Map<String, dynamic>;
     return ZuUser(
-      id:            doc.id,
-      firstName:     d['firstName'] ?? d['pseudo'] ?? '',
-      lastName:      d['lastName'] ?? '',
-      email:         d['email'] ?? '',
-      photoUrl:      d['photoUrl'],
-      level:         d['level'] ?? 1,
-      fftLicense:    d['fftLicense'],
-      fftRank:       d['fftRank'],
-      location:      d['location'],
-      city:          d['city'],
-      credits:       d['credits'] ?? 0,
-      referralCode:  d['referralCode'] ?? '',
-      referralCount: d['referralCount'] ?? 0,
-      createdAt:     (d['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      id:                  doc.id,
+      firstName:           d['firstName'] ?? d['pseudo'] ?? '',
+      lastName:            d['lastName'] ?? '',
+      email:               d['email'] ?? '',
+      photoUrl:            d['photoUrl'],
+      level:               d['level'] ?? 1,
+      fftLicense:          d['fftLicense'],
+      fftRank:             d['fftRank'],
+      location:            d['location'] as GeoPoint?,
+      lastKnownLocation:   d['lastKnownLocation'] as GeoPoint?,
+      city:                d['city'],
+      credits:             d['credits'] ?? 0,
+      referralCode:        d['referralCode'] ?? '',
+      referralCount:       d['referralCount'] ?? 0,
+      createdAt:           (d['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
 
   Map<String, dynamic> toFirestore() => {
-    'firstName':     firstName,
-    'lastName':      lastName,
-    'email':         email,
-    'photoUrl':      photoUrl,
-    'level':         level,
-    'fftLicense':    fftLicense,
-    'fftRank':       fftRank,
-    'location':      location,
-    'city':          city,
-    'credits':       credits,
-    'referralCode':  referralCode,
-    'referralCount': referralCount,
-    'createdAt':     Timestamp.fromDate(createdAt),
+    'firstName':           firstName,
+    'lastName':            lastName,
+    'email':               email,
+    'photoUrl':            photoUrl,
+    'level':               level,
+    'fftLicense':          fftLicense,
+    'fftRank':             fftRank,
+    'location':            location,
+    'lastKnownLocation':   lastKnownLocation,
+    'city':                city,
+    'credits':             credits,
+    'referralCode':        referralCode,
+    'referralCount':       referralCount,
+    'createdAt':           Timestamp.fromDate(createdAt),
   };
 
-  ZuUser copyWith({int? credits, int? level, String? fftLicense, String? fftRank}) => ZuUser(
+  ZuUser copyWith({int? credits, int? level, String? fftLicense, String? fftRank,
+      GeoPoint? lastKnownLocation}) => ZuUser(
     id: id, firstName: firstName, lastName: lastName, email: email, photoUrl: photoUrl,
     level: level ?? this.level,
     fftLicense: fftLicense ?? this.fftLicense,
     fftRank: fftRank ?? this.fftRank,
-    location: location, city: city,
+    location: location,
+    lastKnownLocation: lastKnownLocation ?? this.lastKnownLocation,
+    city: city,
     credits: credits ?? this.credits,
     referralCode: referralCode,
     referralCount: referralCount,
@@ -632,4 +639,62 @@ class ZuReservation {
       createdAt:        (d['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
+}
+
+// ─── USER AVAILABILITY ───────────────────────────────────────────
+
+class UserAvailability {
+  final String userId;
+  final bool isAvailable;
+  final DateTime expiresAt;
+  final GeoPoint? location;
+  final int level;
+  final DateTime updatedAt;
+
+  const UserAvailability({
+    required this.userId,
+    required this.isAvailable,
+    required this.expiresAt,
+    this.location,
+    required this.level,
+    required this.updatedAt,
+  });
+
+  bool get isStillValid => isAvailable && expiresAt.isAfter(DateTime.now());
+
+  factory UserAvailability.fromFirestore(DocumentSnapshot doc) {
+    final d = doc.data() as Map<String, dynamic>;
+    return UserAvailability(
+      userId:      doc.id,
+      isAvailable: d['isAvailable'] as bool? ?? false,
+      expiresAt:   (d['expiresAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      location:    d['location'] as GeoPoint?,
+      level:       d['level'] as int? ?? 1,
+      updatedAt:   (d['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+    );
+  }
+
+  Map<String, dynamic> toFirestore() => {
+    'isAvailable': isAvailable,
+    'expiresAt':   Timestamp.fromDate(expiresAt),
+    'location':    location,
+    'level':       level,
+    'updatedAt':   Timestamp.fromDate(updatedAt),
+  };
+}
+
+// ─── SCORED MATCH ────────────────────────────────────────────────
+
+class ScoredMatch {
+  final ZuMatch match;
+  final int score;           // 0–100
+  final double? distanceKm;  // null si pas de localisation
+  final bool levelMatch;     // level in [levelMin, levelMax]
+
+  const ScoredMatch({
+    required this.match,
+    required this.score,
+    this.distanceKm,
+    required this.levelMatch,
+  });
 }

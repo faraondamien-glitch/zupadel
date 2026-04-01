@@ -944,6 +944,219 @@ final myReservationsProvider = StreamProvider<List<ZuReservation>>((ref) {
 });
 
 // ══════════════════════════════════════════════
+//  MATCHMAKING SERVICE
+// ══════════════════════════════════════════════
+
+class MatchmakingService {
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+
+  String get _uid => _auth.currentUser!.uid;
+
+  /// Définit la disponibilité de l'utilisateur dans `userAvailability/{uid}`.
+  /// Récupère la position GPS actuelle si disponible.
+  Future<void> setAvailability({
+    required bool available,
+    int hours = 3,
+  }) async {
+    final expiresAt = DateTime.now().add(Duration(hours: hours));
+
+    // Récupère le niveau de l'user
+    final userDoc = await _db.collection('users').doc(_uid).get();
+    final level = userDoc.data()?['level'] as int? ?? 1;
+
+    GeoPoint? location;
+    if (!kIsWeb && available) {
+      try {
+        final locService = LocationService();
+        final pos = await locService.getCurrentPosition();
+        if (pos != null) {
+          location = GeoPoint(pos.latitude, pos.longitude);
+        }
+      } catch (_) {}
+    }
+
+    final data = <String, dynamic>{
+      'isAvailable': available,
+      'expiresAt':   Timestamp.fromDate(expiresAt),
+      'level':       level,
+      'updatedAt':   FieldValue.serverTimestamp(),
+    };
+    if (location != null) data['location'] = location;
+
+    await _db.collection('userAvailability').doc(_uid).set(data, SetOptions(merge: true));
+
+    // Met aussi à jour lastKnownLocation dans users/{uid} si on a la position
+    if (location != null) {
+      await _db.collection('users').doc(_uid).update({
+        'lastKnownLocation': location,
+      });
+    }
+  }
+
+  /// Met à jour `users/{uid}.lastKnownLocation` et `userAvailability/{uid}.location`.
+  Future<void> updateUserLocation() async {
+    if (kIsWeb) return;
+    try {
+      final locService = LocationService();
+      final pos = await locService.getCurrentPosition();
+      if (pos == null) return;
+      final geo = GeoPoint(pos.latitude, pos.longitude);
+
+      await _db.collection('users').doc(_uid).update({
+        'lastKnownLocation': geo,
+      });
+
+      // Met à jour la location dans userAvailability si le doc existe
+      final availDoc = await _db.collection('userAvailability').doc(_uid).get();
+      if (availDoc.exists) {
+        await _db.collection('userAvailability').doc(_uid).update({
+          'location': geo,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+    } catch (e) {
+      debugPrint('[MatchmakingService] updateUserLocation error: $e');
+    }
+  }
+
+  /// Retourne un stream de matchs ouverts scorés par compatibilité.
+  Stream<List<ScoredMatch>> watchSuggestedMatches({
+    required int userLevel,
+    GeoPoint? userLocation,
+    bool isAvailable = false,
+  }) {
+    return _db
+        .collection('matches')
+        .where('status', isEqualTo: MatchStatus.open.name)
+        .limit(50)
+        .snapshots()
+        .map((snap) {
+          final scored = snap.docs
+              .map(ZuMatch.fromFirestore)
+              .map((match) => _scoreMatch(
+                    match: match,
+                    userLevel: userLevel,
+                    userLocation: userLocation,
+                    isAvailable: isAvailable,
+                  ))
+              .where((sm) => sm.score > 0)
+              .toList()
+            ..sort((a, b) => b.score.compareTo(a.score));
+          return scored;
+        });
+  }
+
+  /// Calcule le score de compatibilité entre un joueur et un match.
+  ScoredMatch _scoreMatch({
+    required ZuMatch match,
+    required int userLevel,
+    required GeoPoint? userLocation,
+    required bool isAvailable,
+  }) {
+    // ── Level score (0–50) ──────────────────────────
+    int levelScore;
+    final bool exactLevel = userLevel >= match.levelMin && userLevel <= match.levelMax;
+    if (exactLevel) {
+      levelScore = 50;
+    } else if ((userLevel - match.levelMin).abs() == 1 ||
+               (userLevel - match.levelMax).abs() == 1) {
+      levelScore = 30;
+    } else {
+      levelScore = 0;
+    }
+
+    // ── Distance score (0–30) ───────────────────────
+    int distanceScore = 0;
+    double? distanceKm;
+    if (userLocation != null && match.location != null) {
+      final distM = Geolocator.distanceBetween(
+        userLocation.latitude, userLocation.longitude,
+        match.location!.latitude, match.location!.longitude,
+      );
+      distanceKm = distM / 1000;
+      if (distanceKm < 3) {
+        distanceScore = 30;
+      } else if (distanceKm < 10) {
+        distanceScore = 20;
+      } else if (distanceKm < 20) {
+        distanceScore = 10;
+      } else if (distanceKm < 30) {
+        distanceScore = 5;
+      } else {
+        distanceScore = 0;
+      }
+    }
+
+    // ── Availability bonus (0–20) ───────────────────
+    final int availBonus = isAvailable ? 20 : 0;
+
+    final int total = levelScore + distanceScore + availBonus;
+
+    return ScoredMatch(
+      match:      match,
+      score:      total,
+      distanceKm: distanceKm,
+      levelMatch: exactLevel,
+    );
+  }
+
+  /// Appelle la CF `getMatchSuggestions` et retourne les profils scorés.
+  Future<List<Map<String, dynamic>>> getMatchSuggestions(String matchId) async {
+    final result = await FirebaseFunctions.instanceFor(region: 'europe-west3')
+        .httpsCallable('getMatchSuggestions')
+        .call({'matchId': matchId});
+    final data = result.data as Map<String, dynamic>;
+    return List<Map<String, dynamic>>.from(data['suggestions'] as List);
+  }
+
+  /// Appelle la CF `invitePlayerToMatch`.
+  Future<void> invitePlayer({
+    required String matchId,
+    required String invitedUid,
+  }) async {
+    await FirebaseFunctions.instanceFor(region: 'europe-west3')
+        .httpsCallable('invitePlayerToMatch')
+        .call({'matchId': matchId, 'invitedUid': invitedUid});
+  }
+}
+
+final matchmakingServiceProvider = Provider<MatchmakingService>((ref) => MatchmakingService());
+
+/// Provider qui indique si l'utilisateur courant est disponible.
+final availabilityProvider = StreamProvider<UserAvailability?>((ref) {
+  final auth = ref.watch(authStateProvider).valueOrNull;
+  if (auth == null) return Stream.value(null);
+  return FirebaseFirestore.instance
+      .collection('userAvailability')
+      .doc(auth.uid)
+      .snapshots()
+      .map((d) => d.exists ? UserAvailability.fromFirestore(d) : null);
+});
+
+/// Provider de matchs suggérés (scorés) pour l'utilisateur courant.
+final suggestedMatchesProvider = StreamProvider<List<ScoredMatch>>((ref) {
+  final user     = ref.watch(currentUserProvider).valueOrNull;
+  final avail    = ref.watch(availabilityProvider).valueOrNull;
+  final position = ref.watch(userPositionProvider).valueOrNull;
+
+  if (user == null) return Stream.value([]);
+
+  GeoPoint? geo;
+  if (position != null) {
+    geo = GeoPoint(position.latitude, position.longitude);
+  } else if (user.lastKnownLocation != null) {
+    geo = user.lastKnownLocation;
+  }
+
+  return ref.watch(matchmakingServiceProvider).watchSuggestedMatches(
+    userLevel:    user.level,
+    userLocation: geo,
+    isAvailable:  avail?.isStillValid ?? false,
+  );
+});
+
+// ══════════════════════════════════════════════
 //  USER STATS
 // ══════════════════════════════════════════════
 

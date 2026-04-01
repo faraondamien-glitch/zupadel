@@ -435,8 +435,9 @@ class ZuMatchCard extends StatelessWidget {
   final ZuMatch match;
   final VoidCallback? onTap;
   final VoidCallback? onJoin;
+  final Widget? trailingBadge;
 
-  const ZuMatchCard({super.key, required this.match, this.onTap, this.onJoin});
+  const ZuMatchCard({super.key, required this.match, this.onTap, this.onJoin, this.trailingBadge});
 
   @override
   Widget build(BuildContext context) {
@@ -469,6 +470,10 @@ class ZuMatchCard extends StatelessWidget {
                   ],
                 ),
               ),
+              if (trailingBadge != null) ...[
+                trailingBadge!,
+                const SizedBox(width: 8),
+              ],
               ZuTag(match.statusLabel, style: tagStyle),
             ],
           ),
