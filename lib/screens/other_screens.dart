@@ -13,6 +13,7 @@ import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuth;
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:path_provider/path_provider.dart';
@@ -964,13 +965,6 @@ class ProfileScreen extends ConsumerWidget {
                       icon: '⚙️',
                       label: 'Paramètres',
                       onTap: () => context.go('/settings'),
-                    ),
-                    const Divider(height: 1),
-                    _MenuRow(
-                      icon: '🚪',
-                      label: 'Déconnexion',
-                      color: ZuTheme.accentRed,
-                      onTap: () => ref.read(authServiceProvider).signOut(),
                     ),
                   ],
                 ),
@@ -1935,6 +1929,329 @@ class _NotifRow extends StatelessWidget {
     onChanged: onChanged,
     activeColor: ZuTheme.accent,
     contentPadding: EdgeInsets.zero,
+  );
+}
+
+// ══════════════════════════════════════════════
+//  PARAMÈTRES
+// ══════════════════════════════════════════════
+
+class SettingsScreen extends ConsumerStatefulWidget {
+  const SettingsScreen({super.key});
+
+  @override
+  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+  int _defaultDispoHours = 3;
+  bool _changingPassword  = false;
+  final _emailCtrl        = TextEditingController();
+  final _pwCtrl           = TextEditingController();
+  final _pwConfirmCtrl    = TextEditingController();
+
+  @override
+  void dispose() {
+    _emailCtrl.dispose();
+    _pwCtrl.dispose();
+    _pwConfirmCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final user = ref.watch(currentUserProvider).valueOrNull;
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Paramètres')),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+        children: [
+
+          // ── Matchmaking ─────────────────────────────────────
+          Text('Matchmaking', style: Theme.of(context).textTheme.headlineSmall),
+          const SizedBox(height: 8),
+          ZuCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Durée de disponibilité par défaut',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Quand tu actives "Je suis disponible", combien de temps rester visible ?',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 12),
+                SegmentedButton<int>(
+                  segments: const [
+                    ButtonSegment(value: 1,  label: Text('1h')),
+                    ButtonSegment(value: 3,  label: Text('3h')),
+                    ButtonSegment(value: 8,  label: Text('8h')),
+                  ],
+                  selected: {_defaultDispoHours},
+                  onSelectionChanged: (s) => setState(() => _defaultDispoHours = s.first),
+                  style: ButtonStyle(
+                    backgroundColor: WidgetStateProperty.resolveWith((states) {
+                      if (states.contains(WidgetState.selected)) {
+                        return ZuTheme.accent.withOpacity(0.2);
+                      }
+                      return null;
+                    }),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          // ── Notifications ────────────────────────────────────
+          Text('Notifications', style: Theme.of(context).textTheme.headlineSmall),
+          const SizedBox(height: 8),
+          ZuCard(
+            onTap: () => context.push('/settings/notifications'),
+            child: Row(
+              children: [
+                const Text('🔔', style: TextStyle(fontSize: 18)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Préférences de notifications',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ),
+                Icon(Icons.chevron_right, color: ZuTheme.textSecondary, size: 20),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          // ── Compte ───────────────────────────────────────────
+          Text('Compte', style: Theme.of(context).textTheme.headlineSmall),
+          const SizedBox(height: 8),
+          ZuCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Email affiché
+                Text(
+                  'Email',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  user?.email ?? '—',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                const Divider(height: 24),
+
+                // Changer le mot de passe
+                GestureDetector(
+                  onTap: () => setState(() => _changingPassword = !_changingPassword),
+                  child: Row(
+                    children: [
+                      const Text('🔑', style: TextStyle(fontSize: 18)),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Changer le mot de passe',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                      ),
+                      Icon(
+                        _changingPassword ? Icons.expand_less : Icons.expand_more,
+                        color: ZuTheme.textSecondary,
+                        size: 20,
+                      ),
+                    ],
+                  ),
+                ),
+
+                if (_changingPassword) ...[
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _pwCtrl,
+                    obscureText: true,
+                    decoration: InputDecoration(
+                      labelText: 'Nouveau mot de passe',
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _pwConfirmCtrl,
+                    obscureText: true,
+                    decoration: InputDecoration(
+                      labelText: 'Confirmer le mot de passe',
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  ZuButton(
+                    label: 'Mettre à jour',
+                    onPressed: () => _changePassword(context),
+                  ),
+                ],
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          // ── Zone dangereuse ──────────────────────────────────
+          Text('Zone dangereuse', style: Theme.of(context).textTheme.headlineSmall),
+          const SizedBox(height: 8),
+          ZuCard(
+            child: Column(
+              children: [
+                _SettingsRow(
+                  icon: '🚪',
+                  label: 'Se déconnecter',
+                  color: ZuTheme.accentRed,
+                  onTap: () => _confirmSignOut(context),
+                ),
+                const Divider(height: 1),
+                _SettingsRow(
+                  icon: '🗑️',
+                  label: 'Supprimer mon compte',
+                  color: ZuTheme.accentRed,
+                  onTap: () => _confirmDeleteAccount(context),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          // ── À propos ─────────────────────────────────────────
+          Center(
+            child: Column(
+              children: [
+                Text(
+                  'Zupadel',
+                  style: GoogleFonts.syne(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: ZuTheme.textSecondary,
+                  ),
+                ),
+                Text(
+                  'v1.0.0 · Fait avec ❤️ pour le padel',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _changePassword(BuildContext context) async {
+    if (_pwCtrl.text.isEmpty) return;
+    if (_pwCtrl.text != _pwConfirmCtrl.text) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Les mots de passe ne correspondent pas.')),
+      );
+      return;
+    }
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      await user?.updatePassword(_pwCtrl.text);
+      _pwCtrl.clear();
+      _pwConfirmCtrl.clear();
+      if (context.mounted) {
+        setState(() => _changingPassword = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Mot de passe mis à jour.')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur : $e')),
+        );
+      }
+    }
+  }
+
+  void _confirmSignOut(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: ZuTheme.bgCard,
+        title: Text('Se déconnecter ?',
+          style: GoogleFonts.syne(fontWeight: FontWeight.w700, color: ZuTheme.textPrimary)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              ref.read(authServiceProvider).signOut();
+            },
+            child: Text('Déconnecter', style: TextStyle(color: ZuTheme.accentRed)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmDeleteAccount(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: ZuTheme.bgCard,
+        title: Text('Supprimer le compte ?',
+          style: GoogleFonts.syne(fontWeight: FontWeight.w700, color: ZuTheme.accentRed)),
+        content: const Text(
+          'Cette action est irréversible. Tous tes matchs, crédits et statistiques seront perdus.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              try {
+                await FirebaseAuth.instance.currentUser?.delete();
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Re-connecte-toi avant de supprimer le compte.')),
+                  );
+                }
+              }
+            },
+            child: Text('Supprimer', style: TextStyle(color: ZuTheme.accentRed)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SettingsRow extends StatelessWidget {
+  final String     icon;
+  final String     label;
+  final Color?     color;
+  final VoidCallback onTap;
+
+  const _SettingsRow({required this.icon, required this.label, required this.onTap, this.color});
+
+  @override
+  Widget build(BuildContext context) => ListTile(
+    contentPadding: EdgeInsets.zero,
+    leading: Text(icon, style: const TextStyle(fontSize: 18)),
+    title: Text(
+      label,
+      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+        color: color ?? ZuTheme.textPrimary,
+      ),
+    ),
+    onTap: onTap,
   );
 }
 

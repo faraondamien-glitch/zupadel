@@ -127,6 +127,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, __) => const ProfileEditScreen(),
       ),
       GoRoute(
+        path: '/settings',
+        builder: (_, __) => const SettingsScreen(),
+      ),
+      GoRoute(
         path: '/settings/notifications',
         builder: (_, __) => const NotificationSettingsScreen(),
       ),
