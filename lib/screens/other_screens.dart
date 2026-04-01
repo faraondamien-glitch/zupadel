@@ -1636,77 +1636,38 @@ class _ShareStatsScreenState extends ConsumerState<ShareStatsScreen> {
     final stats = ref.watch(userStatsProvider).valueOrNull;
 
     return Scaffold(
+      backgroundColor: ZuTheme.bgPrimary,
       appBar: AppBar(title: const Text('Partager mes stats')),
       body: Column(
         children: [
-          const SizedBox(height: 24),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: RepaintBoundary(
-              key: _repaintKey,
-              child: Container(
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [Color(0xFF161F14), Color(0xFF0D0F14)],
-                  ),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: ZuTheme.accent.withOpacity(0.3)),
-                ),
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text(
-                          'ZUPADEL',
-                          style: GoogleFonts.syne(
-                            fontSize: 16, fontWeight: FontWeight.w800,
-                            color: ZuTheme.accent, letterSpacing: -0.5,
-                          ),
-                        ),
-                        const Spacer(),
-                        Text(
-                          user?.fullName ?? '',
-                          style: GoogleFonts.dmSans(
-                            fontSize: 13, color: ZuTheme.textSecondary,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
-                    if (stats != null) ...[
-                      _ShareStatRow('Matchs joués', '${stats.matchesPlayed}'),
-                      _ShareStatRow('Victoires',    '${stats.matchesWon}'),
-                      _ShareStatRow('Win rate',     '${(stats.winRate * 100).toStringAsFixed(0)}%'),
-                      _ShareStatRow('Heures jouées','${stats.hoursPlayed}h'),
-                      _ShareStatRow('Sets gagnés',  '${stats.setsWon}'),
-                    ] else ...[
-                      const Center(child: Text('Aucune stat disponible')),
-                    ],
-                    const SizedBox(height: 16),
-                    Center(
-                      child: Text(
-                        'zupadel.app',
-                        style: GoogleFonts.dmSans(
-                          fontSize: 11, color: ZuTheme.textSecondary,
-                        ),
-                      ),
-                    ),
-                  ],
+          Expanded(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: RepaintBoundary(
+                  key: _repaintKey,
+                  child: _StatsCard(user: user, stats: stats),
                 ),
               ),
             ),
           ),
-          const SizedBox(height: 32),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: ZuButton(
-              label: 'Partager',
-              loading: _sharing,
-              onPressed: _shareCard,
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 40),
+            child: Column(
+              children: [
+                Text(
+                  'Appuyez sur Partager pour envoyer votre carte sur Instagram, X, WhatsApp…',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.dmSans(fontSize: 12, color: ZuTheme.textSecondary),
+                ),
+                const SizedBox(height: 16),
+                ZuButton(
+                  label: 'Partager ma carte',
+                  loading: _sharing,
+                  onPressed: _shareCard,
+                  icon: const Icon(Icons.share_rounded, size: 18),
+                ),
+              ],
             ),
           ),
         ],
@@ -1715,19 +1676,327 @@ class _ShareStatsScreenState extends ConsumerState<ShareStatsScreen> {
   }
 }
 
-class _ShareStatRow extends StatelessWidget {
-  final String label;
-  final String value;
-  const _ShareStatRow(this.label, this.value);
+// ─── Carte de stats à partager ──────────────────────────────────
+
+class _StatsCard extends StatelessWidget {
+  final ZuUser? user;
+  final UserStats? stats;
+
+  const _StatsCard({required this.user, required this.stats});
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 6),
+  Widget build(BuildContext context) {
+    final winRate = stats?.winRate ?? 0.0;
+    final winPct  = (winRate * 100).round();
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: ZuTheme.accent.withOpacity(0.25), width: 1.5),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF141D12), Color(0xFF0D0F18), Color(0xFF0A0F0D)],
+          stops: [0.0, 0.5, 1.0],
+        ),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: Stack(
+          children: [
+            // ── Décoration fond — cercles diffus ──────────
+            Positioned(
+              top: -60, right: -60,
+              child: Container(
+                width: 200, height: 200,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: ZuTheme.accent.withOpacity(0.06),
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: -40, left: -40,
+              child: Container(
+                width: 160, height: 160,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: ZuTheme.accent2.withOpacity(0.05),
+                ),
+              ),
+            ),
+
+            // ── Contenu ───────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Header — avatar + nom + logo
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      ZuAvatar(
+                        photoUrl: user?.photoUrl,
+                        initials: user?.initials ?? 'ZP',
+                        size: 44,
+                        bgColor: ZuTheme.playerColors[0],
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              user?.fullName ?? 'Joueur',
+                              style: GoogleFonts.syne(
+                                fontSize: 15, fontWeight: FontWeight.w700,
+                                color: ZuTheme.textPrimary,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: ZuTheme.accent.withOpacity(0.15),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Text(
+                                    'Niveau ${user?.level ?? 1}',
+                                    style: GoogleFonts.syne(
+                                      fontSize: 10, fontWeight: FontWeight.w700,
+                                      color: ZuTheme.accent,
+                                    ),
+                                  ),
+                                ),
+                                if (user?.fftRank != null) ...[
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    user!.fftRank!,
+                                    style: GoogleFonts.dmSans(
+                                      fontSize: 10, color: ZuTheme.textSecondary,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      Text(
+                        'ZUPADEL',
+                        style: GoogleFonts.syne(
+                          fontSize: 13, fontWeight: FontWeight.w800,
+                          color: ZuTheme.accent, letterSpacing: 1,
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  // Séparateur
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 20),
+                    child: Container(
+                      height: 1,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            ZuTheme.accent.withOpacity(0),
+                            ZuTheme.accent.withOpacity(0.4),
+                            ZuTheme.accent.withOpacity(0),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  // Stat héroïque — matchs joués
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        '${stats?.matchesPlayed ?? 0}',
+                        style: GoogleFonts.syne(
+                          fontSize: 64, fontWeight: FontWeight.w800,
+                          color: ZuTheme.textPrimary, height: 1.0,
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10, left: 8),
+                        child: Text(
+                          'matchs\njoués',
+                          style: GoogleFonts.dmSans(
+                            fontSize: 13, color: ZuTheme.textSecondary, height: 1.3,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Barre Win Rate
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            'WIN RATE',
+                            style: GoogleFonts.syne(
+                              fontSize: 10, fontWeight: FontWeight.w700,
+                              color: ZuTheme.textSecondary, letterSpacing: 1.2,
+                            ),
+                          ),
+                          const Spacer(),
+                          Text(
+                            '$winPct%',
+                            style: GoogleFonts.syne(
+                              fontSize: 14, fontWeight: FontWeight.w800,
+                              color: winPct >= 50 ? ZuTheme.accent : Colors.orange,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: Stack(
+                          children: [
+                            Container(
+                              height: 6,
+                              color: Colors.white.withOpacity(0.08),
+                            ),
+                            FractionallySizedBox(
+                              widthFactor: winRate.clamp(0.0, 1.0),
+                              child: Container(
+                                height: 6,
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    colors: winPct >= 50
+                                        ? [ZuTheme.accent.withOpacity(0.7), ZuTheme.accent]
+                                        : [Colors.orange.withOpacity(0.7), Colors.orange],
+                                  ),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Grille 2×2 stats secondaires
+                  Row(
+                    children: [
+                      Expanded(child: _StatTile(
+                        icon: '🏆', value: '${stats?.matchesWon ?? 0}', label: 'Victoires',
+                      )),
+                      const SizedBox(width: 10),
+                      Expanded(child: _StatTile(
+                        icon: '⏱', value: '${stats?.hoursPlayed ?? 0}h', label: 'Jouées',
+                      )),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(child: _StatTile(
+                        icon: '🎾', value: '${stats?.setsWon ?? 0}', label: 'Sets gagnés',
+                      )),
+                      const SizedBox(width: 10),
+                      Expanded(child: _StatTile(
+                        icon: '📊',
+                        value: stats?.avgOpponentLevel != null && stats!.avgOpponentLevel > 0
+                            ? stats.avgOpponentLevel.toStringAsFixed(1)
+                            : '—',
+                        label: 'Niv. moyen adv.',
+                      )),
+                    ],
+                  ),
+
+                  // Footer
+                  Padding(
+                    padding: const EdgeInsets.only(top: 20),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Container(
+                            height: 1,
+                            color: Colors.white.withOpacity(0.06),
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: Text(
+                            'zupadel.app',
+                            style: GoogleFonts.dmSans(
+                              fontSize: 10, color: ZuTheme.textSecondary, letterSpacing: 0.5,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: Container(
+                            height: 1,
+                            color: Colors.white.withOpacity(0.06),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StatTile extends StatelessWidget {
+  final String icon;
+  final String value;
+  final String label;
+
+  const _StatTile({required this.icon, required this.value, required this.label});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+    decoration: BoxDecoration(
+      color: Colors.white.withOpacity(0.04),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: Colors.white.withOpacity(0.06)),
+    ),
     child: Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label, style: GoogleFonts.dmSans(fontSize: 14, color: ZuTheme.textSecondary)),
-        Text(value,  style: GoogleFonts.syne(fontSize: 14, fontWeight: FontWeight.w700, color: ZuTheme.textPrimary)),
+        Text(icon, style: const TextStyle(fontSize: 18)),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                value,
+                style: GoogleFonts.syne(
+                  fontSize: 16, fontWeight: FontWeight.w800, color: ZuTheme.textPrimary,
+                ),
+              ),
+              Text(
+                label,
+                style: GoogleFonts.dmSans(
+                  fontSize: 10, color: ZuTheme.textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
       ],
     ),
   );
