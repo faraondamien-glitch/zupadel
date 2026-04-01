@@ -8,8 +8,10 @@ enum MatchVisibility { public, private }
 enum TournamentStatus { pending, published, refused }
 enum CreditOpType {
   registration, joinMatch, postMatchReview, referral,
-  betWin, purchase, refund, coachSubscription, tournamentEntry, send, receive
+  betWin, purchase, refund, coachSubscription, tournamentEntry, send, receive,
+  courtBooking, courtBookingRefund,
 }
+enum ReservationStatus { confirmed, cancelled, completed }
 
 // ─── USER ────────────────────────────────────────────────────────
 
@@ -23,6 +25,7 @@ class ZuUser {
   final String? fftLicense;
   final String? fftRank;     // P25, P100, P250...
   final GeoPoint? location;
+  final GeoPoint? lastKnownLocation;
   final String? city;
   final int credits;
   final String referralCode;
@@ -39,6 +42,7 @@ class ZuUser {
     this.fftLicense,
     this.fftRank,
     this.location,
+    this.lastKnownLocation,
     this.city,
     required this.credits,
     required this.referralCode,
@@ -62,45 +66,50 @@ class ZuUser {
   factory ZuUser.fromFirestore(DocumentSnapshot doc) {
     final d = doc.data() as Map<String, dynamic>;
     return ZuUser(
-      id:            doc.id,
-      firstName:     d['firstName'] ?? d['pseudo'] ?? '',
-      lastName:      d['lastName'] ?? '',
-      email:         d['email'] ?? '',
-      photoUrl:      d['photoUrl'],
-      level:         d['level'] ?? 1,
-      fftLicense:    d['fftLicense'],
-      fftRank:       d['fftRank'],
-      location:      d['location'],
-      city:          d['city'],
-      credits:       d['credits'] ?? 0,
-      referralCode:  d['referralCode'] ?? '',
-      referralCount: d['referralCount'] ?? 0,
-      createdAt:     (d['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      id:                  doc.id,
+      firstName:           d['firstName'] ?? d['pseudo'] ?? '',
+      lastName:            d['lastName'] ?? '',
+      email:               d['email'] ?? '',
+      photoUrl:            d['photoUrl'],
+      level:               d['level'] ?? 1,
+      fftLicense:          d['fftLicense'],
+      fftRank:             d['fftRank'],
+      location:            d['location'] as GeoPoint?,
+      lastKnownLocation:   d['lastKnownLocation'] as GeoPoint?,
+      city:                d['city'],
+      credits:             d['credits'] ?? 0,
+      referralCode:        d['referralCode'] ?? '',
+      referralCount:       d['referralCount'] ?? 0,
+      createdAt:           (d['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
 
   Map<String, dynamic> toFirestore() => {
-    'firstName':     firstName,
-    'lastName':      lastName,
-    'email':         email,
-    'photoUrl':      photoUrl,
-    'level':         level,
-    'fftLicense':    fftLicense,
-    'fftRank':       fftRank,
-    'location':      location,
-    'city':          city,
-    'credits':       credits,
-    'referralCode':  referralCode,
-    'referralCount': referralCount,
-    'createdAt':     Timestamp.fromDate(createdAt),
+    'firstName':           firstName,
+    'lastName':            lastName,
+    'email':               email,
+    'photoUrl':            photoUrl,
+    'level':               level,
+    'fftLicense':          fftLicense,
+    'fftRank':             fftRank,
+    'location':            location,
+    'lastKnownLocation':   lastKnownLocation,
+    'city':                city,
+    'credits':             credits,
+    'referralCode':        referralCode,
+    'referralCount':       referralCount,
+    'createdAt':           Timestamp.fromDate(createdAt),
   };
 
-  ZuUser copyWith({int? credits, int? level, String? fftLicense, String? fftRank}) => ZuUser(
+  ZuUser copyWith({int? credits, int? level, String? fftLicense, String? fftRank,
+      GeoPoint? lastKnownLocation}) => ZuUser(
     id: id, firstName: firstName, lastName: lastName, email: email, photoUrl: photoUrl,
     level: level ?? this.level,
     fftLicense: fftLicense ?? this.fftLicense,
     fftRank: fftRank ?? this.fftRank,
-    location: location, city: city,
+    location: location,
+    lastKnownLocation: lastKnownLocation ?? this.lastKnownLocation,
+    city: city,
     credits: credits ?? this.credits,
     referralCode: referralCode,
     referralCount: referralCount,
@@ -132,6 +141,7 @@ class ZuMatch {
   final List<String> bettorIds;   // joueurs ayant placé une mise
   final double? avgRating;
   final int ratingCount;
+  final int? notifiedCount;
   final DateTime createdAt;
 
   const ZuMatch({
@@ -156,6 +166,7 @@ class ZuMatch {
     this.bettorIds = const [],
     this.avgRating,
     required this.ratingCount,
+    this.notifiedCount,
     required this.createdAt,
   });
 
@@ -183,6 +194,7 @@ class ZuMatch {
       bettorIds:       List<String>.from(d['bettorIds'] ?? []),
       avgRating:       (d['avgRating'] as num?)?.toDouble(),
       ratingCount:     d['ratingCount'] ?? 0,
+      notifiedCount:   d['notifiedCount'] as int?,
       createdAt:       (d['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
@@ -464,4 +476,228 @@ class UserStats {
     setsLost:           d['setsLost'] ?? 0,
     avgOpponentLevel:   (d['avgOpponentLevel'] as num?)?.toDouble() ?? 0,
   );
+}
+
+// ─── CLUB PARTENAIRE ─────────────────────────────────────────────
+
+class ZuClub {
+  final String id;
+  final String name;
+  final String address;
+  final String city;
+  final GeoPoint? location;
+  final String? phoneNumber;
+  final String? website;
+  final List<String> amenities;   // parking, vestiaires, douches, bar, ...
+  final bool isActive;
+  final int pricePerSlotCredits;  // coût d'un créneau en crédits
+  final int slotDurationMinutes;  // durée d'un créneau (60 ou 90 min)
+  // horaires : "monday" → "08:00-22:00"  (vide = fermé)
+  final Map<String, String> openingHours;
+
+  const ZuClub({
+    required this.id,
+    required this.name,
+    required this.address,
+    required this.city,
+    this.location,
+    this.phoneNumber,
+    this.website,
+    required this.amenities,
+    required this.isActive,
+    required this.pricePerSlotCredits,
+    required this.slotDurationMinutes,
+    required this.openingHours,
+  });
+
+  factory ZuClub.fromFirestore(DocumentSnapshot doc) {
+    final d = doc.data() as Map<String, dynamic>;
+    return ZuClub(
+      id:                   doc.id,
+      name:                 d['name'] ?? '',
+      address:              d['address'] ?? '',
+      city:                 d['city'] ?? '',
+      location:             d['location'] as GeoPoint?,
+      phoneNumber:          d['phoneNumber'],
+      website:              d['website'],
+      amenities:            List<String>.from(d['amenities'] ?? []),
+      isActive:             d['isActive'] ?? false,
+      pricePerSlotCredits:  d['pricePerSlotCredits'] ?? 5,
+      slotDurationMinutes:  d['slotDurationMinutes'] ?? 90,
+      openingHours:         Map<String, String>.from(d['openingHours'] ?? {}),
+    );
+  }
+
+  /// Retourne tous les créneaux théoriques pour un jour donné.
+  /// Format openingHours : "08:00-22:00"
+  List<DateTime> slotsForDay(DateTime day) {
+    final weekday = _weekdayKey(day.weekday);
+    final hours = openingHours[weekday];
+    if (hours == null || hours.isEmpty) return [];
+    final parts = hours.split('-');
+    if (parts.length != 2) return [];
+    final open  = _parseTime(parts[0], day);
+    final close = _parseTime(parts[1], day);
+    final slots = <DateTime>[];
+    var current = open;
+    while (current.add(Duration(minutes: slotDurationMinutes)).compareTo(close) <= 0) {
+      slots.add(current);
+      current = current.add(Duration(minutes: slotDurationMinutes));
+    }
+    return slots;
+  }
+
+  static String _weekdayKey(int weekday) => switch (weekday) {
+    1 => 'monday', 2 => 'tuesday', 3 => 'wednesday',
+    4 => 'thursday', 5 => 'friday', 6 => 'saturday',
+    _ => 'sunday',
+  };
+
+  static DateTime _parseTime(String t, DateTime day) {
+    final parts = t.trim().split(':');
+    return DateTime(day.year, day.month, day.day,
+        int.parse(parts[0]), int.parse(parts[1]));
+  }
+}
+
+// ─── TERRAIN (COURT) ─────────────────────────────────────────────
+
+class ZuCourt {
+  final String id;
+  final String clubId;
+  final String name;     // "Court 1", "Court 2", ...
+  final String surface;  // gazon synthétique, béton, moquette, ...
+  final bool isIndoor;
+  final bool isActive;
+
+  const ZuCourt({
+    required this.id,
+    required this.clubId,
+    required this.name,
+    required this.surface,
+    required this.isIndoor,
+    required this.isActive,
+  });
+
+  factory ZuCourt.fromFirestore(DocumentSnapshot doc) {
+    final d = doc.data() as Map<String, dynamic>;
+    return ZuCourt(
+      id:       doc.id,
+      clubId:   doc.reference.parent.parent?.id ?? '',
+      name:     d['name'] ?? '',
+      surface:  d['surface'] ?? '',
+      isIndoor: d['isIndoor'] ?? false,
+      isActive: d['isActive'] ?? true,
+    );
+  }
+}
+
+// ─── RÉSERVATION ─────────────────────────────────────────────────
+
+class ZuReservation {
+  final String id;
+  final String userId;
+  final String clubId;
+  final String clubName;
+  final String courtId;
+  final String courtName;
+  final DateTime startTime;
+  final int durationMinutes;
+  final int priceCredits;
+  final ReservationStatus status;
+  final String? matchId;
+  final DateTime createdAt;
+
+  const ZuReservation({
+    required this.id,
+    required this.userId,
+    required this.clubId,
+    required this.clubName,
+    required this.courtId,
+    required this.courtName,
+    required this.startTime,
+    required this.durationMinutes,
+    required this.priceCredits,
+    required this.status,
+    this.matchId,
+    required this.createdAt,
+  });
+
+  DateTime get endTime => startTime.add(Duration(minutes: durationMinutes));
+
+  factory ZuReservation.fromFirestore(DocumentSnapshot doc) {
+    final d = doc.data() as Map<String, dynamic>;
+    return ZuReservation(
+      id:               doc.id,
+      userId:           d['userId'] ?? '',
+      clubId:           d['clubId'] ?? '',
+      clubName:         d['clubName'] ?? '',
+      courtId:          d['courtId'] ?? '',
+      courtName:        d['courtName'] ?? '',
+      startTime:        (d['startTime'] as Timestamp).toDate(),
+      durationMinutes:  d['durationMinutes'] ?? 90,
+      priceCredits:     d['priceCredits'] ?? 0,
+      status:           ReservationStatus.values.byName(d['status'] ?? 'confirmed'),
+      matchId:          d['matchId'],
+      createdAt:        (d['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+    );
+  }
+}
+
+// ─── USER AVAILABILITY ───────────────────────────────────────────
+
+class UserAvailability {
+  final String userId;
+  final bool isAvailable;
+  final DateTime expiresAt;
+  final GeoPoint? location;
+  final int level;
+  final DateTime updatedAt;
+
+  const UserAvailability({
+    required this.userId,
+    required this.isAvailable,
+    required this.expiresAt,
+    this.location,
+    required this.level,
+    required this.updatedAt,
+  });
+
+  bool get isStillValid => isAvailable && expiresAt.isAfter(DateTime.now());
+
+  factory UserAvailability.fromFirestore(DocumentSnapshot doc) {
+    final d = doc.data() as Map<String, dynamic>;
+    return UserAvailability(
+      userId:      doc.id,
+      isAvailable: d['isAvailable'] as bool? ?? false,
+      expiresAt:   (d['expiresAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      location:    d['location'] as GeoPoint?,
+      level:       d['level'] as int? ?? 1,
+      updatedAt:   (d['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+    );
+  }
+
+  Map<String, dynamic> toFirestore() => {
+    'isAvailable': isAvailable,
+    'expiresAt':   Timestamp.fromDate(expiresAt),
+    'location':    location,
+    'level':       level,
+    'updatedAt':   Timestamp.fromDate(updatedAt),
+  };
+}
+
+// ─── SCORED MATCH ────────────────────────────────────────────────
+
+class ScoredMatch {
+  final ZuMatch match;
+  final int score;           // 0–100
+  final double? distanceKm;  // null si pas de localisation
+  final bool levelMatch;     // level in [levelMin, levelMax]
+
+  const ScoredMatch({
+    required this.match,
+    required this.score,
+    this.distanceKm,
+    required this.levelMatch,
+  });
 }

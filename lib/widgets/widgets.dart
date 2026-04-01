@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../theme/zu_theme.dart';
 import '../models/models.dart';
+import '../services/services.dart';
 import 'package:intl/intl.dart';
 
 // ─── ZuCard ─────────────────────────────────────────────────────
@@ -65,6 +67,8 @@ class ZuTag extends StatelessWidget {
       decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
       child: Text(
         label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: GoogleFonts.syne(fontSize: 11, fontWeight: FontWeight.w600, color: fg),
       ),
     );
@@ -305,7 +309,7 @@ class _ZuStarRatingState extends State<ZuStarRating> {
 
 // ─── ZuPlayerSlots ──────────────────────────────────────────────
 
-class ZuPlayerSlots extends StatelessWidget {
+class ZuPlayerSlots extends ConsumerWidget {
   final int maxPlayers;
   final List<String> playerIds;
   final double avatarSize;
@@ -318,7 +322,7 @@ class ZuPlayerSlots extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final stackWidth = maxPlayers <= 0
         ? 0.0
         : (maxPlayers - 1) * (avatarSize * 0.72) + avatarSize;
@@ -328,40 +332,46 @@ class ZuPlayerSlots extends StatelessWidget {
       child: Stack(
         children: List.generate(maxPlayers, (i) {
           final filled = i < playerIds.length;
+          if (!filled) {
+            return Positioned(
+              left: i * (avatarSize * 0.72),
+              child: Container(
+                width: avatarSize,
+                height: avatarSize,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(avatarSize / 2),
+                  border: Border.all(
+                    color: ZuTheme.accent.withOpacity(0.3),
+                    style: BorderStyle.solid,
+                    width: 1.5,
+                  ),
+                  color: ZuTheme.accent.withOpacity(0.08),
+                ),
+                child: Icon(Icons.person_add_alt, size: 14, color: ZuTheme.accent.withOpacity(0.5)),
+              ),
+            );
+          }
+          final uid   = playerIds[i];
+          final mini  = ref.watch(playerMiniProvider(uid)).valueOrNull;
           return Positioned(
             left: i * (avatarSize * 0.72),
-            child: filled
-                ? ZuAvatar(
-                    initials: '?',
-                    size: avatarSize,
-                    bgColor: _colors[i % _colors.length],
-                  )
-                : Container(
-                    width: avatarSize,
-                    height: avatarSize,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(avatarSize / 2),
-                      border: Border.all(
-                        color: ZuTheme.accent.withOpacity(0.3),
-                        style: BorderStyle.solid,
-                        width: 1.5,
-                      ),
-                      color: ZuTheme.accent.withOpacity(0.04),
-                    ),
-                    child: Icon(Icons.add, size: 14, color: ZuTheme.accent.withOpacity(0.4)),
-                  ),
+            child: Tooltip(
+              message: mini != null
+                  ? '${mini.firstName} ${mini.lastName}'.trim()
+                  : '',
+              child: ZuAvatar(
+                photoUrl: mini?.photoUrl,
+                initials: mini?.initials ?? '?',
+                size: avatarSize,
+                bgColor: ZuTheme.playerColors[i % ZuTheme.playerColors.length],
+              ),
+            ),
           );
         }),
       ),
     );
   }
 
-  static const _colors = [
-    Color(0xFF1E3A2A),
-    Color(0xFF1E2A3A),
-    Color(0xFF2A1E3A),
-    Color(0xFF3A2A1E),
-  ];
 }
 
 // ─── ZuLevelSelector ────────────────────────────────────────────
@@ -435,8 +445,9 @@ class ZuMatchCard extends StatelessWidget {
   final ZuMatch match;
   final VoidCallback? onTap;
   final VoidCallback? onJoin;
+  final Widget? trailingBadge;
 
-  const ZuMatchCard({super.key, required this.match, this.onTap, this.onJoin});
+  const ZuMatchCard({super.key, required this.match, this.onTap, this.onJoin, this.trailingBadge});
 
   @override
   Widget build(BuildContext context) {
@@ -469,6 +480,10 @@ class ZuMatchCard extends StatelessWidget {
                   ],
                 ),
               ),
+              if (trailingBadge != null) ...[
+                trailingBadge!,
+                const SizedBox(width: 8),
+              ],
               ZuTag(match.statusLabel, style: tagStyle),
             ],
           ),
@@ -546,9 +561,7 @@ class ZuTournamentCard extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [const Color(0xFF1A2510), const Color(0xFF0F1A1A)],
-              ),
+              gradient: ZuTheme.cardGradient,
               borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
             ),
             child: Row(
@@ -778,17 +791,55 @@ class ZuEmptyState extends StatelessWidget {
 
 // ─── ZuShimmer ──────────────────────────────────────────────────
 
-class ZuShimmerCard extends StatelessWidget {
+class ZuShimmerCard extends StatefulWidget {
   const ZuShimmerCard({super.key});
 
   @override
+  State<ZuShimmerCard> createState() => _ZuShimmerCardState();
+}
+
+class _ZuShimmerCardState extends State<ZuShimmerCard>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double> _anim;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat();
+    _anim = Tween<double>(begin: -1.5, end: 1.5).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 140,
-      decoration: BoxDecoration(
-        color: ZuTheme.bgCard,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: ZuTheme.borderColor),
+    return AnimatedBuilder(
+      animation: _anim,
+      builder: (_, __) => Container(
+        height: 140,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: ZuTheme.borderColor),
+          gradient: LinearGradient(
+            begin: Alignment(_anim.value - 1, 0),
+            end:   Alignment(_anim.value + 1, 0),
+            colors: const [
+              Color(0xFF1E2230),
+              Color(0xFF2A2E3E),
+              Color(0xFF1E2230),
+            ],
+          ),
+        ),
       ),
     );
   }

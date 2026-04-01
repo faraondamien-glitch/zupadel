@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../models/models.dart';
 import '../screens/home_screen.dart';
 import '../screens/match_screens.dart';
 import '../screens/other_screens.dart';
@@ -54,11 +55,43 @@ final routerProvider = Provider<GoRouter>((ref) {
         routes: [
           GoRoute(path: '/', builder: (_, __) => const HomeScreen()),
           GoRoute(path: '/matches', builder: (_, __) => const MatchListScreen()),
+          GoRoute(path: '/clubs', builder: (_, __) => const ClubListScreen()),
           GoRoute(path: '/tournaments', builder: (_, __) => const TournamentListScreen()),
           GoRoute(path: '/coaching', builder: (_, __) => const CoachListScreen()),
           GoRoute(path: '/profile', builder: (_, __) => const ProfileScreen()),
           GoRoute(path: '/credits', builder: (_, __) => const CreditsScreen()),
         ],
+      ),
+      // Routes terrains
+      GoRoute(
+        path: '/clubs/:clubId',
+        builder: (_, state) => ClubDetailScreen(clubId: state.pathParameters['clubId']!),
+      ),
+      GoRoute(
+        path: '/clubs/:clubId/courts/:courtId',
+        builder: (_, state) => CourtSlotsScreen(
+          clubId:  state.pathParameters['clubId']!,
+          courtId: state.pathParameters['courtId']!,
+        ),
+      ),
+      GoRoute(
+        path: '/clubs/:clubId/courts/:courtId/book',
+        builder: (_, state) {
+          final extra = state.extra as Map<String, dynamic>;
+          return BookSlotScreen(
+            clubId:  state.pathParameters['clubId']!,
+            courtId: state.pathParameters['courtId']!,
+            slot:    extra['slot'] as DateTime,
+            club:    extra['club'] as ZuClub,
+            court:   extra['court'] as ZuCourt,
+          );
+        },
+      ),
+      GoRoute(
+        path: '/clubs/:clubId/reservations/:resId',
+        builder: (_, state) => ReservationConfirmScreen(
+          reservationId: state.pathParameters['resId']!,
+        ),
       ),
       // Routes hors shell
       GoRoute(
@@ -94,6 +127,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, __) => const ProfileEditScreen(),
       ),
       GoRoute(
+        path: '/settings',
+        builder: (_, __) => const SettingsScreen(),
+      ),
+      GoRoute(
         path: '/settings/notifications',
         builder: (_, __) => const NotificationSettingsScreen(),
       ),
@@ -116,7 +153,7 @@ class MainShell extends StatelessWidget {
   final Widget child;
   const MainShell({super.key, required this.child});
 
-  static const _tabs = ['/', '/matches', '/tournaments', '/coaching', '/profile'];
+  static const _tabs = ['/', '/matches', '/clubs', '/tournaments', '/coaching', '/profile'];
 
   @override
   Widget build(BuildContext context) {
@@ -139,6 +176,7 @@ class MainShell extends StatelessWidget {
           items: const [
             BottomNavigationBarItem(icon: Icon(Icons.home_rounded),             label: 'Accueil'),
             BottomNavigationBarItem(icon: Icon(Icons.sports_tennis_rounded),    label: 'Matchs'),
+            BottomNavigationBarItem(icon: Icon(Icons.grid_view_rounded),        label: 'Terrains'),
             BottomNavigationBarItem(icon: Icon(Icons.emoji_events_rounded),     label: 'Tournois'),
             BottomNavigationBarItem(icon: Icon(Icons.fitness_center_rounded),   label: 'Coaching'),
             BottomNavigationBarItem(icon: Icon(Icons.person_rounded),           label: 'Profil'),

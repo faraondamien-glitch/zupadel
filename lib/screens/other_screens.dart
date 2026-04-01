@@ -12,7 +12,11 @@ import 'package:intl/intl.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuth;
+import 'package:cloud_firestore/cloud_firestore.dart' show FirebaseFirestore;
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import '../theme/zu_theme.dart';
@@ -896,7 +900,29 @@ class ProfileScreen extends ConsumerWidget {
             sliver: SliverToBoxAdapter(
               child: stats == null
                   ? const ZuShimmerCard()
-                  : _StatsGrid(stats: stats),
+                  : stats.matchesPlayed == 0
+                      ? ZuCard(
+                          child: Column(
+                            children: [
+                              const Text('🎾', style: TextStyle(fontSize: 36)),
+                              const SizedBox(height: 10),
+                              Text(
+                                'Pas encore de stats',
+                                style: GoogleFonts.syne(
+                                  fontSize: 15, fontWeight: FontWeight.w700,
+                                  color: ZuTheme.textPrimary,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                'Joue ton premier match pour voir tes statistiques ici !',
+                                style: Theme.of(context).textTheme.bodySmall,
+                                textAlign: TextAlign.center,
+                              ),
+                            ],
+                          ),
+                        )
+                      : _StatsGrid(stats: stats),
             ),
           ),
 
@@ -933,8 +959,12 @@ class ProfileScreen extends ConsumerWidget {
                     _MenuRow(
                       icon: '🤝',
                       label: 'Code parrainage',
-                      trailing: ZuTag(user?.referralCode ?? '...', style: ZuTagStyle.green),
-                      onTap: () => _shareReferral(context, user?.referralCode),
+                      trailing: (user?.referralCode.isNotEmpty ?? false)
+                          ? ZuTag(user!.referralCode, style: ZuTagStyle.green)
+                          : ZuTag('Génération…', style: ZuTagStyle.neutral),
+                      onTap: (user?.referralCode.isNotEmpty ?? false)
+                          ? () => _shareReferral(context, user?.referralCode)
+                          : null,
                     ),
                     const Divider(height: 1),
                     _MenuRow(
@@ -963,13 +993,6 @@ class ProfileScreen extends ConsumerWidget {
                       label: 'Paramètres',
                       onTap: () => context.go('/settings'),
                     ),
-                    const Divider(height: 1),
-                    _MenuRow(
-                      icon: '🚪',
-                      label: 'Déconnexion',
-                      color: ZuTheme.accentRed,
-                      onTap: () => ref.read(authServiceProvider).signOut(),
-                    ),
                   ],
                 ),
               ),
@@ -983,7 +1006,7 @@ class ProfileScreen extends ConsumerWidget {
   void _shareReferral(BuildContext context, String? code) {
     if (code == null) return;
     Share.share(
-      'Rejoins-moi sur Zupadel ! Utilise mon code $code pour recevoir 5 crédits offerts.\n\nhttps://zupadel.app',
+      'Rejoins-moi sur Zupadel ! Utilise mon code $code pour recevoir 5 crédits offerts.\n\nhttps://zupadel.fr',
       subject: 'Code parrainage Zupadel',
     );
   }
@@ -1104,6 +1127,7 @@ class CreditsScreen extends ConsumerStatefulWidget {
 class _CreditsScreenState extends ConsumerState<CreditsScreen> {
   String? _loadingPack;
   StreamSubscription<String>? _iapErrorSub;
+  int _visibleTxCount = 10;
 
   @override
   void didChangeDependencies() {
@@ -1201,8 +1225,15 @@ class _CreditsScreenState extends ConsumerState<CreditsScreen> {
                 Text('crédits', style: Theme.of(context).textTheme.bodySmall),
                 const SizedBox(height: 4),
                 Text(
-                  '≈ ${((user?.credits ?? 0) * 0.5).toStringAsFixed(2)} €',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: ZuTheme.textSecondary),
+                  '≈ ${((user?.credits ?? 0) * 0.5).toStringAsFixed(2)} € de valeur',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: ZuTheme.textSecondary),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '1 crédit ≈ 0,50 € à l\'achat',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: ZuTheme.textSecondary, fontSize: 11,
+                  ),
                 ),
               ],
             ),
@@ -1228,14 +1259,42 @@ class _CreditsScreenState extends ConsumerState<CreditsScreen> {
           txs.when(
             loading: () => const ZuShimmerCard(),
             error: (e, _) => Text('$e'),
-            data: (list) => list.isEmpty
-                ? ZuCard(child: Text('Aucune transaction', style: Theme.of(context).textTheme.bodySmall))
-                : ZuCard(
+            data: (list) {
+              if (list.isEmpty) {
+                return ZuCard(
+                  child: Text('Aucune transaction', style: Theme.of(context).textTheme.bodySmall),
+                );
+              }
+              final visible  = list.take(_visibleTxCount).toList();
+              final hasMore  = list.length > _visibleTxCount;
+              return Column(
+                children: [
+                  ZuCard(
                     padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
                     child: Column(
-                      children: list.take(20).map((tx) => _TxRow(tx: tx)).toList(),
+                      children: visible.map((tx) => _TxRow(tx: tx)).toList(),
                     ),
                   ),
+                  if (hasMore) ...[
+                    const SizedBox(height: 8),
+                    TextButton(
+                      onPressed: () => setState(() => _visibleTxCount += 10),
+                      child: Text(
+                        'Voir ${(list.length - _visibleTxCount).clamp(0, 10)} transaction${list.length - _visibleTxCount > 1 ? 's' : ''} de plus',
+                        style: GoogleFonts.syne(fontSize: 13, color: ZuTheme.accent),
+                      ),
+                    ),
+                  ] else if (list.length > 10) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Toutes les transactions affichées (${list.length})',
+                      style: Theme.of(context).textTheme.bodySmall,
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ],
+              );
+            },
           ),
           const SizedBox(height: 40),
         ],
@@ -1577,77 +1636,38 @@ class _ShareStatsScreenState extends ConsumerState<ShareStatsScreen> {
     final stats = ref.watch(userStatsProvider).valueOrNull;
 
     return Scaffold(
+      backgroundColor: ZuTheme.bgPrimary,
       appBar: AppBar(title: const Text('Partager mes stats')),
       body: Column(
         children: [
-          const SizedBox(height: 24),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: RepaintBoundary(
-              key: _repaintKey,
-              child: Container(
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [Color(0xFF161F14), Color(0xFF0D0F14)],
-                  ),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: ZuTheme.accent.withOpacity(0.3)),
-                ),
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text(
-                          'ZUPADEL',
-                          style: GoogleFonts.syne(
-                            fontSize: 16, fontWeight: FontWeight.w800,
-                            color: ZuTheme.accent, letterSpacing: -0.5,
-                          ),
-                        ),
-                        const Spacer(),
-                        Text(
-                          user?.fullName ?? '',
-                          style: GoogleFonts.dmSans(
-                            fontSize: 13, color: ZuTheme.textSecondary,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
-                    if (stats != null) ...[
-                      _ShareStatRow('Matchs joués', '${stats.matchesPlayed}'),
-                      _ShareStatRow('Victoires',    '${stats.matchesWon}'),
-                      _ShareStatRow('Win rate',     '${(stats.winRate * 100).toStringAsFixed(0)}%'),
-                      _ShareStatRow('Heures jouées','${stats.hoursPlayed}h'),
-                      _ShareStatRow('Sets gagnés',  '${stats.setsWon}'),
-                    ] else ...[
-                      const Center(child: Text('Aucune stat disponible')),
-                    ],
-                    const SizedBox(height: 16),
-                    Center(
-                      child: Text(
-                        'zupadel.app',
-                        style: GoogleFonts.dmSans(
-                          fontSize: 11, color: ZuTheme.textSecondary,
-                        ),
-                      ),
-                    ),
-                  ],
+          Expanded(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: RepaintBoundary(
+                  key: _repaintKey,
+                  child: _StatsCard(user: user, stats: stats),
                 ),
               ),
             ),
           ),
-          const SizedBox(height: 32),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: ZuButton(
-              label: 'Partager',
-              loading: _sharing,
-              onPressed: _shareCard,
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 40),
+            child: Column(
+              children: [
+                Text(
+                  'Appuyez sur Partager pour envoyer votre carte sur Instagram, X, WhatsApp…',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.dmSans(fontSize: 12, color: ZuTheme.textSecondary),
+                ),
+                const SizedBox(height: 16),
+                ZuButton(
+                  label: 'Partager ma carte',
+                  loading: _sharing,
+                  onPressed: _shareCard,
+                  icon: const Icon(Icons.share_rounded, size: 18),
+                ),
+              ],
             ),
           ),
         ],
@@ -1656,19 +1676,327 @@ class _ShareStatsScreenState extends ConsumerState<ShareStatsScreen> {
   }
 }
 
-class _ShareStatRow extends StatelessWidget {
-  final String label;
-  final String value;
-  const _ShareStatRow(this.label, this.value);
+// ─── Carte de stats à partager ──────────────────────────────────
+
+class _StatsCard extends StatelessWidget {
+  final ZuUser? user;
+  final UserStats? stats;
+
+  const _StatsCard({required this.user, required this.stats});
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 6),
+  Widget build(BuildContext context) {
+    final winRate = stats?.winRate ?? 0.0;
+    final winPct  = (winRate * 100).round();
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: ZuTheme.accent.withOpacity(0.25), width: 1.5),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF141D12), Color(0xFF0D0F18), Color(0xFF0A0F0D)],
+          stops: [0.0, 0.5, 1.0],
+        ),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: Stack(
+          children: [
+            // ── Décoration fond — cercles diffus ──────────
+            Positioned(
+              top: -60, right: -60,
+              child: Container(
+                width: 200, height: 200,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: ZuTheme.accent.withOpacity(0.06),
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: -40, left: -40,
+              child: Container(
+                width: 160, height: 160,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: ZuTheme.accent2.withOpacity(0.05),
+                ),
+              ),
+            ),
+
+            // ── Contenu ───────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Header — avatar + nom + logo
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      ZuAvatar(
+                        photoUrl: user?.photoUrl,
+                        initials: user?.initials ?? 'ZP',
+                        size: 44,
+                        bgColor: ZuTheme.playerColors[0],
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              user?.fullName ?? 'Joueur',
+                              style: GoogleFonts.syne(
+                                fontSize: 15, fontWeight: FontWeight.w700,
+                                color: ZuTheme.textPrimary,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: ZuTheme.accent.withOpacity(0.15),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Text(
+                                    'Niveau ${user?.level ?? 1}',
+                                    style: GoogleFonts.syne(
+                                      fontSize: 10, fontWeight: FontWeight.w700,
+                                      color: ZuTheme.accent,
+                                    ),
+                                  ),
+                                ),
+                                if (user?.fftRank != null) ...[
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    user!.fftRank!,
+                                    style: GoogleFonts.dmSans(
+                                      fontSize: 10, color: ZuTheme.textSecondary,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      Text(
+                        'ZUPADEL',
+                        style: GoogleFonts.syne(
+                          fontSize: 13, fontWeight: FontWeight.w800,
+                          color: ZuTheme.accent, letterSpacing: 1,
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  // Séparateur
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 20),
+                    child: Container(
+                      height: 1,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            ZuTheme.accent.withOpacity(0),
+                            ZuTheme.accent.withOpacity(0.4),
+                            ZuTheme.accent.withOpacity(0),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  // Stat héroïque — matchs joués
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        '${stats?.matchesPlayed ?? 0}',
+                        style: GoogleFonts.syne(
+                          fontSize: 64, fontWeight: FontWeight.w800,
+                          color: ZuTheme.textPrimary, height: 1.0,
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10, left: 8),
+                        child: Text(
+                          'matchs\njoués',
+                          style: GoogleFonts.dmSans(
+                            fontSize: 13, color: ZuTheme.textSecondary, height: 1.3,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Barre Win Rate
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            'WIN RATE',
+                            style: GoogleFonts.syne(
+                              fontSize: 10, fontWeight: FontWeight.w700,
+                              color: ZuTheme.textSecondary, letterSpacing: 1.2,
+                            ),
+                          ),
+                          const Spacer(),
+                          Text(
+                            '$winPct%',
+                            style: GoogleFonts.syne(
+                              fontSize: 14, fontWeight: FontWeight.w800,
+                              color: winPct >= 50 ? ZuTheme.accent : Colors.orange,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: Stack(
+                          children: [
+                            Container(
+                              height: 6,
+                              color: Colors.white.withOpacity(0.08),
+                            ),
+                            FractionallySizedBox(
+                              widthFactor: winRate.clamp(0.0, 1.0),
+                              child: Container(
+                                height: 6,
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    colors: winPct >= 50
+                                        ? [ZuTheme.accent.withOpacity(0.7), ZuTheme.accent]
+                                        : [Colors.orange.withOpacity(0.7), Colors.orange],
+                                  ),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Grille 2×2 stats secondaires
+                  Row(
+                    children: [
+                      Expanded(child: _StatTile(
+                        icon: '🏆', value: '${stats?.matchesWon ?? 0}', label: 'Victoires',
+                      )),
+                      const SizedBox(width: 10),
+                      Expanded(child: _StatTile(
+                        icon: '⏱', value: '${stats?.hoursPlayed ?? 0}h', label: 'Jouées',
+                      )),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(child: _StatTile(
+                        icon: '🎾', value: '${stats?.setsWon ?? 0}', label: 'Sets gagnés',
+                      )),
+                      const SizedBox(width: 10),
+                      Expanded(child: _StatTile(
+                        icon: '📊',
+                        value: stats?.avgOpponentLevel != null && stats!.avgOpponentLevel > 0
+                            ? stats.avgOpponentLevel.toStringAsFixed(1)
+                            : '—',
+                        label: 'Niv. moyen adv.',
+                      )),
+                    ],
+                  ),
+
+                  // Footer
+                  Padding(
+                    padding: const EdgeInsets.only(top: 20),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Container(
+                            height: 1,
+                            color: Colors.white.withOpacity(0.06),
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: Text(
+                            'zupadel.fr',
+                            style: GoogleFonts.dmSans(
+                              fontSize: 10, color: ZuTheme.textSecondary, letterSpacing: 0.5,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: Container(
+                            height: 1,
+                            color: Colors.white.withOpacity(0.06),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StatTile extends StatelessWidget {
+  final String icon;
+  final String value;
+  final String label;
+
+  const _StatTile({required this.icon, required this.value, required this.label});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+    decoration: BoxDecoration(
+      color: Colors.white.withOpacity(0.04),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: Colors.white.withOpacity(0.06)),
+    ),
     child: Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label, style: GoogleFonts.dmSans(fontSize: 14, color: ZuTheme.textSecondary)),
-        Text(value,  style: GoogleFonts.syne(fontSize: 14, fontWeight: FontWeight.w700, color: ZuTheme.textPrimary)),
+        Text(icon, style: const TextStyle(fontSize: 18)),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                value,
+                style: GoogleFonts.syne(
+                  fontSize: 16, fontWeight: FontWeight.w800, color: ZuTheme.textPrimary,
+                ),
+              ),
+              Text(
+                label,
+                style: GoogleFonts.dmSans(
+                  fontSize: 10, color: ZuTheme.textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
       ],
     ),
   );
@@ -1727,7 +2055,7 @@ class _CoachDetailScreenState extends ConsumerState<CoachDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final coachAsync = ref.watch(coachesProvider);
+    final coachAsync = ref.watch(coachDetailProvider(widget.coachId));
     final myUid      = ref.watch(authStateProvider).valueOrNull?.uid;
 
     return Scaffold(
@@ -1735,14 +2063,10 @@ class _CoachDetailScreenState extends ConsumerState<CoachDetailScreen> {
       body: coachAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error:   (e, _) => Center(child: Text('$e')),
-        data:    (list) {
-          final coach = list.firstWhere(
-            (c) => c.id == widget.coachId,
-            orElse: () => list.first,
-          );
-          final isMyCoach  = coach.userId == myUid;
-          final isExpired  = coach.subscribedUntil == null ||
-              coach.subscribedUntil!.isBefore(DateTime.now());
+        data:    (coach) {
+          if (coach == null) return const Center(child: Text('Coach introuvable'));
+          final isMyCoach = coach.userId == myUid;
+          final isExpired = coach.subscribedUntil.isBefore(DateTime.now());
 
           return ListView(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
@@ -1750,6 +2074,7 @@ class _CoachDetailScreenState extends ConsumerState<CoachDetailScreen> {
               ZuCoachCard(coach: coach),
               const SizedBox(height: 20),
               if (isMyCoach) ...[
+                // Vue propriétaire : gestion de l'abonnement
                 ZuCard(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1762,10 +2087,10 @@ class _CoachDetailScreenState extends ConsumerState<CoachDetailScreen> {
                             isExpired ? 'Expiré' : 'Actif',
                             style: isExpired ? ZuTagStyle.red : ZuTagStyle.green,
                           ),
-                          if (!isExpired && coach.subscribedUntil != null) ...[
+                          if (!isExpired) ...[
                             const SizedBox(width: 8),
                             Text(
-                              'jusqu\'au ${DateFormat('d MMM yyyy', 'fr_FR').format(coach.subscribedUntil!)}',
+                              'jusqu\'au ${DateFormat('d MMM yyyy', 'fr_FR').format(coach.subscribedUntil)}',
                               style: Theme.of(context).textTheme.bodySmall,
                             ),
                           ],
@@ -1781,6 +2106,20 @@ class _CoachDetailScreenState extends ConsumerState<CoachDetailScreen> {
                   ),
                 ),
               ] else ...[
+                // Vue joueur : profil complet du coach
+                if (coach.bio.isNotEmpty) ...[
+                  ZuCard(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('À propos', style: Theme.of(context).textTheme.headlineMedium),
+                        const SizedBox(height: 8),
+                        Text(coach.bio, style: Theme.of(context).textTheme.bodyMedium),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 ZuCard(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1801,6 +2140,47 @@ class _CoachDetailScreenState extends ConsumerState<CoachDetailScreen> {
                     ],
                   ),
                 ),
+                if (coach.availabilities != null && coach.availabilities!.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  ZuCard(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Disponibilités', style: Theme.of(context).textTheme.headlineMedium),
+                        const SizedBox(height: 8),
+                        Text(coach.availabilities!, style: Theme.of(context).textTheme.bodyMedium),
+                      ],
+                    ),
+                  ),
+                ],
+                if (coach.instagram != null || coach.youtube != null) ...[
+                  const SizedBox(height: 12),
+                  ZuCard(
+                    child: Wrap(
+                      spacing: 12, runSpacing: 8,
+                      children: [
+                        if (coach.instagram != null)
+                          OutlinedButton.icon(
+                            onPressed: () => launchUrl(
+                              Uri.parse('https://instagram.com/${coach.instagram}'),
+                              mode: LaunchMode.externalApplication,
+                            ),
+                            icon: const Icon(Icons.photo_camera_outlined, size: 16),
+                            label: Text('@${coach.instagram}'),
+                          ),
+                        if (coach.youtube != null)
+                          OutlinedButton.icon(
+                            onPressed: () => launchUrl(
+                              Uri.parse(coach.youtube!),
+                              mode: LaunchMode.externalApplication,
+                            ),
+                            icon: const Icon(Icons.play_circle_outline, size: 16),
+                            label: const Text('YouTube'),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
               ],
             ],
           );
@@ -1824,46 +2204,111 @@ class NotificationSettingsScreen extends ConsumerStatefulWidget {
 
 class _NotificationSettingsScreenState
     extends ConsumerState<NotificationSettingsScreen> {
-  bool _matchInvites    = true;
-  bool _matchAccepted   = true;
-  bool _matchCancelled  = true;
-  bool _matchFinished   = true;
-  bool _tournaments     = true;
-  bool _coaching        = true;
+  // Valeurs locales (initialisées depuis Firestore au chargement)
+  bool _matchInvites   = true;
+  bool _matchAccepted  = true;
+  bool _matchCancelled = true;
+  bool _matchFinished  = true;
+  bool _tournaments    = true;
+  bool _coaching       = true;
+  bool _loaded         = false;
+  bool _saving         = false;
+
+  static const _prefsKey = 'notifPrefs';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFromFirestore();
+  }
+
+  Future<void> _loadFromFirestore() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+    final prefs = doc.data()?[_prefsKey] as Map<String, dynamic>?;
+    if (prefs != null && mounted) {
+      setState(() {
+        _matchInvites   = prefs['matchInvites']   as bool? ?? true;
+        _matchAccepted  = prefs['matchAccepted']  as bool? ?? true;
+        _matchCancelled = prefs['matchCancelled'] as bool? ?? true;
+        _matchFinished  = prefs['matchFinished']  as bool? ?? true;
+        _tournaments    = prefs['tournaments']    as bool? ?? true;
+        _coaching       = prefs['coaching']       as bool? ?? true;
+        _loaded         = true;
+      });
+    } else if (mounted) {
+      setState(() => _loaded = true);
+    }
+  }
+
+  Future<void> _save() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    setState(() => _saving = true);
+    await FirebaseFirestore.instance.collection('users').doc(uid).update({
+      _prefsKey: {
+        'matchInvites':   _matchInvites,
+        'matchAccepted':  _matchAccepted,
+        'matchCancelled': _matchCancelled,
+        'matchFinished':  _matchFinished,
+        'tournaments':    _tournaments,
+        'coaching':       _coaching,
+      },
+    });
+    if (mounted) setState(() => _saving = false);
+  }
+
+  void _toggle(bool value, void Function(bool) setter) {
+    setter(value);
+    _save();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Notifications')),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
-        children: [
-          ZuCard(
-            child: Column(
-              children: [
-                _NotifRow('Nouveaux matchs près de moi', _matchInvites,
-                    (v) => setState(() => _matchInvites = v)),
-                _NotifRow('Demande acceptée', _matchAccepted,
-                    (v) => setState(() => _matchAccepted = v)),
-                _NotifRow('Match annulé', _matchCancelled,
-                    (v) => setState(() => _matchCancelled = v)),
-                _NotifRow('Match terminé (avis)', _matchFinished,
-                    (v) => setState(() => _matchFinished = v)),
-                _NotifRow('Tournois', _tournaments,
-                    (v) => setState(() => _tournaments = v)),
-                _NotifRow('Coaching', _coaching,
-                    (v) => setState(() => _coaching = v)),
-              ],
+      appBar: AppBar(
+        title: const Text('Notifications'),
+        actions: [
+          if (_saving)
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: SizedBox(width: 18, height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2)),
             ),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            'Les préférences de notifications sont sauvegardées localement.',
-            style: Theme.of(context).textTheme.bodySmall,
-            textAlign: TextAlign.center,
-          ),
         ],
       ),
+      body: _loaded
+          ? ListView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+              children: [
+                ZuCard(
+                  child: Column(
+                    children: [
+                      _NotifRow('Nouveaux matchs près de moi', _matchInvites,
+                          (v) => setState(() => _toggle(v, (x) => _matchInvites = x))),
+                      _NotifRow('Demande acceptée', _matchAccepted,
+                          (v) => setState(() => _toggle(v, (x) => _matchAccepted = x))),
+                      _NotifRow('Match annulé', _matchCancelled,
+                          (v) => setState(() => _toggle(v, (x) => _matchCancelled = x))),
+                      _NotifRow('Match terminé (avis)', _matchFinished,
+                          (v) => setState(() => _toggle(v, (x) => _matchFinished = x))),
+                      _NotifRow('Tournois', _tournaments,
+                          (v) => setState(() => _toggle(v, (x) => _tournaments = x))),
+                      _NotifRow('Coaching', _coaching,
+                          (v) => setState(() => _toggle(v, (x) => _coaching = x))),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Sauvegardé sur ton compte — synchronisé sur tous tes appareils.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            )
+          : const Center(child: CircularProgressIndicator()),
     );
   }
 }
@@ -1882,4 +2327,1095 @@ class _NotifRow extends StatelessWidget {
     activeColor: ZuTheme.accent,
     contentPadding: EdgeInsets.zero,
   );
+}
+
+// ══════════════════════════════════════════════
+//  PARAMÈTRES
+// ══════════════════════════════════════════════
+
+class SettingsScreen extends ConsumerStatefulWidget {
+  const SettingsScreen({super.key});
+
+  @override
+  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+  int _defaultDispoHours = 3;
+  bool _changingPassword  = false;
+  final _emailCtrl        = TextEditingController();
+  final _pwCtrl           = TextEditingController();
+  final _pwConfirmCtrl    = TextEditingController();
+
+  @override
+  void dispose() {
+    _emailCtrl.dispose();
+    _pwCtrl.dispose();
+    _pwConfirmCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final user = ref.watch(currentUserProvider).valueOrNull;
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Paramètres')),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+        children: [
+
+          // ── Matchmaking ─────────────────────────────────────
+          Text('Matchmaking', style: Theme.of(context).textTheme.headlineSmall),
+          const SizedBox(height: 8),
+          ZuCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Durée de disponibilité par défaut',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Quand tu actives "Je suis disponible", combien de temps rester visible ?',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 12),
+                SegmentedButton<int>(
+                  segments: const [
+                    ButtonSegment(value: 1,  label: Text('1h')),
+                    ButtonSegment(value: 3,  label: Text('3h')),
+                    ButtonSegment(value: 8,  label: Text('8h')),
+                  ],
+                  selected: {_defaultDispoHours},
+                  onSelectionChanged: (s) => setState(() => _defaultDispoHours = s.first),
+                  style: ButtonStyle(
+                    backgroundColor: WidgetStateProperty.resolveWith((states) {
+                      if (states.contains(WidgetState.selected)) {
+                        return ZuTheme.accent.withOpacity(0.2);
+                      }
+                      return null;
+                    }),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          // ── Notifications ────────────────────────────────────
+          Text('Notifications', style: Theme.of(context).textTheme.headlineSmall),
+          const SizedBox(height: 8),
+          ZuCard(
+            onTap: () => context.push('/settings/notifications'),
+            child: Row(
+              children: [
+                const Text('🔔', style: TextStyle(fontSize: 18)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Préférences de notifications',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ),
+                Icon(Icons.chevron_right, color: ZuTheme.textSecondary, size: 20),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          // ── Compte ───────────────────────────────────────────
+          Text('Compte', style: Theme.of(context).textTheme.headlineSmall),
+          const SizedBox(height: 8),
+          ZuCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Email affiché
+                Text(
+                  'Email',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  user?.email ?? '—',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                const Divider(height: 24),
+
+                // Changer le mot de passe
+                GestureDetector(
+                  onTap: () => setState(() => _changingPassword = !_changingPassword),
+                  child: Row(
+                    children: [
+                      const Text('🔑', style: TextStyle(fontSize: 18)),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Changer le mot de passe',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                      ),
+                      Icon(
+                        _changingPassword ? Icons.expand_less : Icons.expand_more,
+                        color: ZuTheme.textSecondary,
+                        size: 20,
+                      ),
+                    ],
+                  ),
+                ),
+
+                if (_changingPassword) ...[
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _pwCtrl,
+                    obscureText: true,
+                    decoration: InputDecoration(
+                      labelText: 'Nouveau mot de passe',
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _pwConfirmCtrl,
+                    obscureText: true,
+                    decoration: InputDecoration(
+                      labelText: 'Confirmer le mot de passe',
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  ZuButton(
+                    label: 'Mettre à jour',
+                    onPressed: () => _changePassword(context),
+                  ),
+                ],
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          // ── Zone dangereuse ──────────────────────────────────
+          Text('Zone dangereuse', style: Theme.of(context).textTheme.headlineSmall),
+          const SizedBox(height: 8),
+          ZuCard(
+            child: Column(
+              children: [
+                _SettingsRow(
+                  icon: '🚪',
+                  label: 'Se déconnecter',
+                  color: ZuTheme.accentRed,
+                  onTap: () => _confirmSignOut(context),
+                ),
+                const Divider(height: 1),
+                _SettingsRow(
+                  icon: '🗑️',
+                  label: 'Supprimer mon compte',
+                  color: ZuTheme.accentRed,
+                  onTap: () => _confirmDeleteAccount(context),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          // ── À propos ─────────────────────────────────────────
+          Center(
+            child: Column(
+              children: [
+                Text(
+                  'Zupadel',
+                  style: GoogleFonts.syne(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: ZuTheme.textSecondary,
+                  ),
+                ),
+                Text(
+                  'v1.0.0 · Fait avec ❤️ pour le padel',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _changePassword(BuildContext context) async {
+    if (_pwCtrl.text.isEmpty) return;
+    if (_pwCtrl.text != _pwConfirmCtrl.text) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Les mots de passe ne correspondent pas.')),
+      );
+      return;
+    }
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      await user?.updatePassword(_pwCtrl.text);
+      _pwCtrl.clear();
+      _pwConfirmCtrl.clear();
+      if (context.mounted) {
+        setState(() => _changingPassword = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Mot de passe mis à jour.')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur : $e')),
+        );
+      }
+    }
+  }
+
+  void _confirmSignOut(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: ZuTheme.bgCard,
+        title: Text('Se déconnecter ?',
+          style: GoogleFonts.syne(fontWeight: FontWeight.w700, color: ZuTheme.textPrimary)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              ref.read(authServiceProvider).signOut();
+            },
+            child: Text('Déconnecter', style: TextStyle(color: ZuTheme.accentRed)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmDeleteAccount(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: ZuTheme.bgCard,
+        title: Text('Supprimer le compte ?',
+          style: GoogleFonts.syne(fontWeight: FontWeight.w700, color: ZuTheme.accentRed)),
+        content: const Text(
+          'Cette action est irréversible. Tous tes matchs, crédits et statistiques seront perdus.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              try {
+                await FirebaseAuth.instance.currentUser?.delete();
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Re-connecte-toi avant de supprimer le compte.')),
+                  );
+                }
+              }
+            },
+            child: Text('Supprimer', style: TextStyle(color: ZuTheme.accentRed)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SettingsRow extends StatelessWidget {
+  final String     icon;
+  final String     label;
+  final Color?     color;
+  final VoidCallback onTap;
+
+  const _SettingsRow({required this.icon, required this.label, required this.onTap, this.color});
+
+  @override
+  Widget build(BuildContext context) => ListTile(
+    contentPadding: EdgeInsets.zero,
+    leading: Text(icon, style: const TextStyle(fontSize: 18)),
+    title: Text(
+      label,
+      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+        color: color ?? ZuTheme.textPrimary,
+      ),
+    ),
+    onTap: onTap,
+  );
+}
+
+// ══════════════════════════════════════════════
+//  TERRAINS — LISTE DES CLUBS PARTENAIRES
+// ══════════════════════════════════════════════
+
+class ClubListScreen extends ConsumerWidget {
+  const ClubListScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final clubsAsync = ref.watch(clubsProvider);
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Clubs partenaires')),
+      body: clubsAsync.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error:   (e, _) => Center(child: Text('$e')),
+        data: (clubs) {
+          if (clubs.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.sports_tennis_rounded, size: 48, color: ZuTheme.textSecondary),
+                  const SizedBox(height: 12),
+                  Text('Aucun club partenaire', style: Theme.of(context).textTheme.bodyMedium),
+                ],
+              ),
+            );
+          }
+          return ListView.separated(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+            itemCount: clubs.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 12),
+            itemBuilder: (_, i) => _ClubCard(club: clubs[i]),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ClubCard extends StatelessWidget {
+  final ZuClub club;
+  const _ClubCard({required this.club});
+
+  @override
+  Widget build(BuildContext context) {
+    return ZuCard(
+      onTap: () => context.push('/clubs/${club.id}'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 44, height: 44,
+                decoration: BoxDecoration(
+                  color: ZuTheme.accent.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.sports_tennis_rounded, color: ZuTheme.accent, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(club.name, style: Theme.of(context).textTheme.headlineSmall),
+                    Text('📍 ${club.city}', style: Theme.of(context).textTheme.bodySmall),
+                  ],
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    '${club.pricePerSlotCredits} crédits',
+                    style: GoogleFonts.syne(
+                      fontSize: 13, fontWeight: FontWeight.w700, color: ZuTheme.accent,
+                    ),
+                  ),
+                  Text(
+                    '/ ${club.slotDurationMinutes} min',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
+            ],
+          ),
+          if (club.amenities.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 6, runSpacing: 6,
+              children: club.amenities
+                  .map((a) => ZuTag(a, style: ZuTagStyle.neutral))
+                  .toList(),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════
+//  TERRAINS — DÉTAIL CLUB + COURTS
+// ══════════════════════════════════════════════
+
+class ClubDetailScreen extends ConsumerWidget {
+  final String clubId;
+  const ClubDetailScreen({super.key, required this.clubId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final clubAsync   = ref.watch(clubDetailProvider(clubId));
+    final courtsAsync = ref.watch(clubCourtsProvider(clubId));
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Club')),
+      body: clubAsync.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error:   (e, _) => Center(child: Text('$e')),
+        data: (club) {
+          if (club == null) return const Center(child: Text('Club introuvable'));
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+            children: [
+              // Infos club
+              ZuCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(club.name, style: Theme.of(context).textTheme.headlineLarge),
+                    const SizedBox(height: 4),
+                    Text('📍 ${club.address}, ${club.city}',
+                        style: Theme.of(context).textTheme.bodySmall),
+                    if (club.phoneNumber != null) ...[
+                      const SizedBox(height: 4),
+                      Text('📞 ${club.phoneNumber}',
+                          style: Theme.of(context).textTheme.bodySmall),
+                    ],
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        ZuTag('${club.pricePerSlotCredits} crédits / ${club.slotDurationMinutes} min',
+                            style: ZuTagStyle.green),
+                        if (club.amenities.isNotEmpty) ...[
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Wrap(
+                              spacing: 6, runSpacing: 6,
+                              children: club.amenities
+                                  .map((a) => ZuTag(a, style: ZuTagStyle.neutral))
+                                  .toList(),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              // Horaires
+              if (club.openingHours.isNotEmpty) ...[
+                ZuSectionTitle('Horaires'),
+                const SizedBox(height: 8),
+                ZuCard(
+                  child: Column(
+                    children: _buildOpeningHours(context, club.openingHours),
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+              // Courts
+              ZuSectionTitle('Terrains disponibles'),
+              const SizedBox(height: 8),
+              courtsAsync.when(
+                loading: () => const ZuShimmerCard(),
+                error:   (e, _) => Text('$e'),
+                data: (courts) {
+                  if (courts.isEmpty) {
+                    return ZuCard(
+                      child: Text('Aucun terrain disponible',
+                          style: Theme.of(context).textTheme.bodySmall),
+                    );
+                  }
+                  return Column(
+                    children: courts.map((court) => Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: ZuCard(
+                        onTap: () => context.push('/clubs/${club.id}/courts/${court.id}'),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 40, height: 40,
+                              decoration: BoxDecoration(
+                                color: ZuTheme.bgSurface,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Icon(
+                                court.isIndoor
+                                    ? Icons.house_rounded
+                                    : Icons.wb_sunny_rounded,
+                                color: ZuTheme.accent, size: 20,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(court.name,
+                                      style: Theme.of(context).textTheme.headlineSmall),
+                                  Text(
+                                    '${court.surface} · ${court.isIndoor ? "Couvert" : "Extérieur"}',
+                                    style: Theme.of(context).textTheme.bodySmall,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const Icon(Icons.chevron_right_rounded,
+                                color: ZuTheme.textSecondary),
+                          ],
+                        ),
+                      ),
+                    )).toList(),
+                  );
+                },
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  static List<Widget> _buildOpeningHours(
+      BuildContext context, Map<String, String> hours) {
+    const days = [
+      ('monday', 'Lundi'), ('tuesday', 'Mardi'), ('wednesday', 'Mercredi'),
+      ('thursday', 'Jeudi'), ('friday', 'Vendredi'),
+      ('saturday', 'Samedi'), ('sunday', 'Dimanche'),
+    ];
+    return days.map(((key, label)) {
+      final h = hours[key];
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 90,
+              child: Text(label, style: Theme.of(context).textTheme.bodyMedium),
+            ),
+            Text(
+              h?.isNotEmpty == true ? h! : 'Fermé',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: h?.isNotEmpty == true
+                    ? ZuTheme.textPrimary
+                    : ZuTheme.textSecondary,
+              ),
+            ),
+          ],
+        ),
+      );
+    }).toList();
+  }
+}
+
+// ══════════════════════════════════════════════
+//  TERRAINS — CRÉNEAUX D'UN COURT
+// ══════════════════════════════════════════════
+
+class CourtSlotsScreen extends ConsumerStatefulWidget {
+  final String clubId;
+  final String courtId;
+  const CourtSlotsScreen({
+    super.key,
+    required this.clubId,
+    required this.courtId,
+  });
+
+  @override
+  ConsumerState<CourtSlotsScreen> createState() => _CourtSlotsScreenState();
+}
+
+class _CourtSlotsScreenState extends ConsumerState<CourtSlotsScreen> {
+  DateTime _selectedDay = DateTime.now();
+  List<DateTime> _bookedSlots = [];
+  bool _loadingSlots = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBooked();
+  }
+
+  Future<void> _loadBooked() async {
+    setState(() => _loadingSlots = true);
+    try {
+      final slots = await ref.read(reservationServiceProvider).bookedSlots(
+        courtId: widget.courtId,
+        day: _selectedDay,
+      );
+      if (mounted) setState(() => _bookedSlots = slots);
+    } finally {
+      if (mounted) setState(() => _loadingSlots = false);
+    }
+  }
+
+  void _changeDay(DateTime day) {
+    setState(() {
+      _selectedDay = day;
+      _bookedSlots = [];
+    });
+    _loadBooked();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final clubAsync   = ref.watch(clubDetailProvider(widget.clubId));
+    final courtsAsync = ref.watch(clubCourtsProvider(widget.clubId));
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Choisir un créneau')),
+      body: clubAsync.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error:   (e, _) => Center(child: Text('$e')),
+        data: (club) {
+          if (club == null) return const Center(child: Text('Club introuvable'));
+          final court = courtsAsync.valueOrNull
+              ?.firstWhere((c) => c.id == widget.courtId,
+                  orElse: () => courtsAsync.valueOrNull!.first);
+
+          final allSlots     = club.slotsForDay(_selectedDay);
+          final bookedSet    = _bookedSlots.map((d) => d.toIso8601String()).toSet();
+          final now          = DateTime.now();
+          final availableSlots = allSlots
+              .where((s) => s.isAfter(now) && !bookedSet.contains(s.toIso8601String()))
+              .toList();
+
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+            children: [
+              // Infos terrain
+              if (court != null)
+                ZuCard(
+                  child: Row(
+                    children: [
+                      Icon(
+                        court.isIndoor ? Icons.house_rounded : Icons.wb_sunny_rounded,
+                        color: ZuTheme.accent,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(court.name,
+                                style: Theme.of(context).textTheme.headlineSmall),
+                            Text(
+                              '${court.surface} · ${court.isIndoor ? "Couvert" : "Extérieur"} · '
+                              '${club.slotDurationMinutes} min · ${club.pricePerSlotCredits} crédits',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: 16),
+              // Sélecteur de jour
+              ZuSectionTitle('Choisir un jour'),
+              const SizedBox(height: 8),
+              _DayPicker(
+                selected: _selectedDay,
+                onChanged: _changeDay,
+              ),
+              const SizedBox(height: 16),
+              // Créneaux
+              ZuSectionTitle('Créneaux disponibles'),
+              const SizedBox(height: 8),
+              if (_loadingSlots)
+                const Center(child: CircularProgressIndicator())
+              else if (allSlots.isEmpty)
+                ZuCard(
+                  child: Text('Club fermé ce jour',
+                      style: Theme.of(context).textTheme.bodySmall),
+                )
+              else if (availableSlots.isEmpty)
+                ZuCard(
+                  child: Text('Plus de créneaux disponibles',
+                      style: Theme.of(context).textTheme.bodySmall),
+                )
+              else
+                GridView.count(
+                  crossAxisCount: 3,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  mainAxisSpacing: 8, crossAxisSpacing: 8,
+                  childAspectRatio: 2.2,
+                  children: availableSlots.map((slot) => _SlotChip(
+                    slot: slot,
+                    onTap: () => context.push(
+                      '/clubs/${widget.clubId}/courts/${widget.courtId}/book',
+                      extra: {
+                        'slot': slot,
+                        'club': club,
+                        'court': court,
+                      },
+                    ),
+                  )).toList(),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _DayPicker extends StatelessWidget {
+  final DateTime selected;
+  final ValueChanged<DateTime> onChanged;
+  const _DayPicker({required this.selected, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final days = List.generate(14, (i) => DateTime.now().add(Duration(days: i)));
+    return SizedBox(
+      height: 64,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: days.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (_, i) {
+          final day     = days[i];
+          final isToday = i == 0;
+          final isSel   = day.year == selected.year &&
+              day.month == selected.month &&
+              day.day == selected.day;
+          return GestureDetector(
+            onTap: () => onChanged(day),
+            child: Container(
+              width: 52,
+              decoration: BoxDecoration(
+                color: isSel ? ZuTheme.accent : ZuTheme.bgCard,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: isSel ? ZuTheme.accent : ZuTheme.borderColor,
+                ),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    DateFormat('d', 'fr_FR').format(day),
+                    style: GoogleFonts.syne(
+                      fontSize: 16, fontWeight: FontWeight.w800,
+                      color: isSel ? ZuTheme.bgPrimary : ZuTheme.textPrimary,
+                    ),
+                  ),
+                  Text(
+                    isToday ? 'Auj.' : DateFormat('EEE', 'fr_FR').format(day),
+                    style: GoogleFonts.dmSans(
+                      fontSize: 10,
+                      color: isSel ? ZuTheme.bgPrimary : ZuTheme.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _SlotChip extends StatelessWidget {
+  final DateTime slot;
+  final VoidCallback onTap;
+  const _SlotChip({required this.slot, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        decoration: BoxDecoration(
+          color: ZuTheme.accent.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: ZuTheme.accent.withOpacity(0.4)),
+        ),
+        child: Center(
+          child: Text(
+            DateFormat('HH:mm').format(slot),
+            style: GoogleFonts.syne(
+              fontSize: 14, fontWeight: FontWeight.w700, color: ZuTheme.accent,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════
+//  TERRAINS — CONFIRMATION DE RÉSERVATION
+// ══════════════════════════════════════════════
+
+class BookSlotScreen extends ConsumerStatefulWidget {
+  final String clubId;
+  final String courtId;
+  final DateTime slot;
+  final ZuClub club;
+  final ZuCourt court;
+
+  const BookSlotScreen({
+    super.key,
+    required this.clubId,
+    required this.courtId,
+    required this.slot,
+    required this.club,
+    required this.court,
+  });
+
+  @override
+  ConsumerState<BookSlotScreen> createState() => _BookSlotScreenState();
+}
+
+class _BookSlotScreenState extends ConsumerState<BookSlotScreen> {
+  bool _loading = false;
+
+  Future<void> _confirm() async {
+    final user = ref.read(currentUserProvider).valueOrNull;
+    if (user == null) return;
+    if (user.credits < widget.club.pricePerSlotCredits) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Crédits insuffisants. Achète des crédits dans ton profil.')),
+      );
+      return;
+    }
+    setState(() => _loading = true);
+    try {
+      final resId = await ref.read(reservationServiceProvider).bookSlot(
+        clubId:          widget.club.id,
+        clubName:        widget.club.name,
+        courtId:         widget.court.id,
+        courtName:       widget.court.name,
+        startTime:       widget.slot,
+        durationMinutes: widget.club.slotDurationMinutes,
+        priceCredits:    widget.club.pricePerSlotCredits,
+      );
+      if (mounted) {
+        context.go('/clubs/${widget.clubId}/reservations/$resId');
+      }
+    } on FirebaseFunctionsException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message ?? 'Erreur de réservation')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final user = ref.watch(currentUserProvider).valueOrNull;
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Confirmer la réservation')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          ZuCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Récapitulatif',
+                    style: Theme.of(context).textTheme.headlineMedium),
+                const SizedBox(height: 16),
+                _InfoRow(icon: Icons.sports_tennis_rounded,
+                    label: widget.club.name),
+                const SizedBox(height: 8),
+                _InfoRow(icon: Icons.grid_view_rounded,
+                    label: widget.court.name),
+                const SizedBox(height: 8),
+                _InfoRow(
+                  icon: Icons.calendar_today_rounded,
+                  label: DateFormat('EEEE d MMMM yyyy', 'fr_FR').format(widget.slot),
+                ),
+                const SizedBox(height: 8),
+                _InfoRow(
+                  icon: Icons.access_time_rounded,
+                  label:
+                    '${DateFormat('HH:mm').format(widget.slot)} → '
+                    '${DateFormat('HH:mm').format(widget.slot.add(Duration(minutes: widget.club.slotDurationMinutes)))}',
+                ),
+                const SizedBox(height: 8),
+                _InfoRow(
+                  icon: Icons.toll_rounded,
+                  label: '${widget.club.pricePerSlotCredits} crédits',
+                  accent: true,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          if (user != null)
+            ZuCard(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Ton solde actuel',
+                      style: Theme.of(context).textTheme.bodyMedium),
+                  Text(
+                    '${user.credits} crédits',
+                    style: GoogleFonts.syne(
+                      fontWeight: FontWeight.w700,
+                      color: user.credits >= widget.club.pricePerSlotCredits
+                          ? ZuTheme.accent
+                          : ZuTheme.error,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          const SizedBox(height: 24),
+          ZuButton(
+            label: 'Réserver — ${widget.club.pricePerSlotCredits} crédits',
+            loading: _loading,
+            onPressed: _confirm,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool accent;
+  const _InfoRow({required this.icon, required this.label, this.accent = false});
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      Icon(icon, size: 18,
+          color: accent ? ZuTheme.accent : ZuTheme.textSecondary),
+      const SizedBox(width: 10),
+      Expanded(
+        child: Text(
+          label,
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            color: accent ? ZuTheme.accent : null,
+            fontWeight: accent ? FontWeight.w700 : null,
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
+// ══════════════════════════════════════════════
+//  TERRAINS — CONFIRMATION APRÈS RÉSERVATION
+// ══════════════════════════════════════════════
+
+class ReservationConfirmScreen extends ConsumerWidget {
+  final String reservationId;
+  const ReservationConfirmScreen({super.key, required this.reservationId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final resAsync = ref.watch(myReservationsProvider);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Réservation confirmée'),
+        automaticallyImplyLeading: false,
+      ),
+      body: resAsync.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error:   (e, _) => Center(child: Text('$e')),
+        data: (list) {
+          final res = list.where((r) => r.id == reservationId).firstOrNull;
+          if (res == null) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          return ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              const SizedBox(height: 24),
+              Center(
+                child: Container(
+                  width: 72, height: 72,
+                  decoration: BoxDecoration(
+                    color: ZuTheme.accent.withOpacity(0.15),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.check_rounded,
+                      color: ZuTheme.accent, size: 40),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Center(
+                child: Text(
+                  'Terrain réservé !',
+                  style: GoogleFonts.syne(
+                    fontSize: 22, fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+              ZuCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _InfoRow(icon: Icons.sports_tennis_rounded, label: res.clubName),
+                    const SizedBox(height: 8),
+                    _InfoRow(icon: Icons.grid_view_rounded, label: res.courtName),
+                    const SizedBox(height: 8),
+                    _InfoRow(
+                      icon: Icons.calendar_today_rounded,
+                      label: DateFormat('EEEE d MMMM yyyy', 'fr_FR').format(res.startTime),
+                    ),
+                    const SizedBox(height: 8),
+                    _InfoRow(
+                      icon: Icons.access_time_rounded,
+                      label: '${DateFormat('HH:mm').format(res.startTime)} → '
+                          '${DateFormat('HH:mm').format(res.endTime)}',
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              ZuButton(
+                label: 'Créer un match sur ce créneau',
+                outlined: true,
+                onPressed: () => context.go(
+                  '/matches/create',
+                  extra: {'reservationId': res.id, 'club': res.clubName},
+                ),
+              ),
+              const SizedBox(height: 12),
+              ZuButton(
+                label: 'Retour aux clubs',
+                onPressed: () => context.go('/clubs'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
 }

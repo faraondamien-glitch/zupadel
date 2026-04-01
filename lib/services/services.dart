@@ -218,6 +218,7 @@ class MatchFilter {
 class MatchService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final _functions = FirebaseFunctions.instanceFor(region: 'europe-west3');
 
   String get _uid => _auth.currentUser!.uid;
 
@@ -301,7 +302,9 @@ class MatchService {
       'pendingIds': FieldValue.arrayRemove([playerId]),
       'playerIds':  FieldValue.arrayUnion([playerId]),
     });
-    // TODO: send FCM N3
+    _functions.httpsCallable('notifyPlayerAccepted')
+        .call({'matchId': matchId, 'playerId': playerId})
+        .catchError((e) => debugPrint('[FCM] notifyPlayerAccepted: $e'));
   }
 
   Future<void> refusePlayer({required String matchId, required String playerId}) async {
@@ -326,7 +329,9 @@ class MatchService {
         'createdAt':     FieldValue.serverTimestamp(),
       });
     });
-    // TODO: send FCM N3
+    _functions.httpsCallable('notifyPlayerRefused')
+        .call({'matchId': matchId, 'playerId': playerId})
+        .catchError((e) => debugPrint('[FCM] notifyPlayerRefused: $e'));
   }
 
   Future<void> removePlayer({required String matchId, required String playerId}) async {
@@ -376,30 +381,11 @@ class MatchService {
   }
 
   Future<void> cancelMatch({required String matchId}) async {
-    final matchRef = _db.collection('matches').doc(matchId);
-    final matchDoc = await matchRef.get();
-    final match = ZuMatch.fromFirestore(matchDoc);
-
-    final batch = _db.batch();
-    batch.update(matchRef, {'status': MatchStatus.cancelled.name});
-
-    // Remboursement automatique de tous les joueurs (sauf organisateur)
-    for (final pid in match.playerIds) {
-      if (pid == match.organizerId) continue;
-      final playerRef = _db.collection('users').doc(pid);
-      batch.update(playerRef, {'credits': FieldValue.increment(1)});
-      batch.set(_db.collection('creditTransactions').doc(), {
-        'userId':      pid,
-        'type':        'refund',
-        'amount':      1,
-        'refId':       matchId,
-        'description': 'Remboursement : match annulé',
-        'createdAt':   FieldValue.serverTimestamp(),
-      });
-    }
-
-    await batch.commit();
-    // TODO: send FCM N4 à tous les joueurs
+    // Le remboursement des crédits et les notifications sont gérés
+    // par le trigger onMatchCancelled dans les Cloud Functions (index.ts).
+    await _db.collection('matches').doc(matchId).update({
+      'status': MatchStatus.cancelled.name,
+    });
   }
 
   Future<void> leaveReview({
@@ -631,12 +617,20 @@ class CoachService {
       .orderBy('avgRating', descending: true)
       .snapshots()
       .map((s) => s.docs.map(ZuCoach.fromFirestore).toList());
+
+  Stream<ZuCoach?> watchCoach(String id) => _db.collection('coaches')
+      .doc(id)
+      .snapshots()
+      .map((d) => d.exists ? ZuCoach.fromFirestore(d) : null);
 }
 
 final coachServiceProvider = Provider<CoachService>((ref) => CoachService());
 
 final coachesProvider = StreamProvider<List<ZuCoach>>((ref) =>
     ref.watch(coachServiceProvider).watchCoaches());
+
+final coachDetailProvider = StreamProvider.family<ZuCoach?, String>((ref, id) =>
+    ref.watch(coachServiceProvider).watchCoach(id));
 
 // ══════════════════════════════════════════════
 //  CREDIT TRANSACTIONS
@@ -726,7 +720,7 @@ class IAPService {
           await _functions.httpsCallable('validateIAPPurchase').call({
             'productId':        purchase.productID,
             'verificationData': purchase.verificationData.serverVerificationData,
-            'source':           purchase.verificationData.source,
+            'platform':         purchase.verificationData.source,
           });
         } catch (e) {
           debugPrint('[IAP] validation error: $e');
@@ -807,6 +801,396 @@ class PaymentService {
 }
 
 final paymentServiceProvider = Provider<PaymentService>((ref) => PaymentService());
+
+// ══════════════════════════════════════════════
+//  CLUB SERVICE
+// ══════════════════════════════════════════════
+
+class ClubService {
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+
+  Stream<List<ZuClub>> watchClubs() => _db.collection('clubs')
+      .where('isActive', isEqualTo: true)
+      .orderBy('name')
+      .snapshots()
+      .map((s) => s.docs.map(ZuClub.fromFirestore).toList());
+
+  Stream<ZuClub?> watchClub(String id) => _db.collection('clubs')
+      .doc(id)
+      .snapshots()
+      .map((d) => d.exists ? ZuClub.fromFirestore(d) : null);
+
+  Stream<List<ZuCourt>> watchCourts(String clubId) => _db
+      .collection('clubs')
+      .doc(clubId)
+      .collection('courts')
+      .where('isActive', isEqualTo: true)
+      .orderBy('name')
+      .snapshots()
+      .map((s) => s.docs.map(ZuCourt.fromFirestore).toList());
+}
+
+final clubServiceProvider    = Provider<ClubService>((ref) => ClubService());
+
+final clubsProvider = StreamProvider<List<ZuClub>>((ref) =>
+    ref.watch(clubServiceProvider).watchClubs());
+
+final clubDetailProvider = StreamProvider.family<ZuClub?, String>((ref, id) =>
+    ref.watch(clubServiceProvider).watchClub(id));
+
+final clubCourtsProvider = StreamProvider.family<List<ZuCourt>, String>((ref, clubId) =>
+    ref.watch(clubServiceProvider).watchCourts(clubId));
+
+// ══════════════════════════════════════════════
+//  RESERVATION SERVICE
+// ══════════════════════════════════════════════
+
+class ReservationService {
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final _functions = FirebaseFunctions.instanceFor(region: 'europe-west3');
+
+  String get _uid => _auth.currentUser!.uid;
+
+  Stream<List<ZuReservation>> watchMyReservations() => _db
+      .collection('reservations')
+      .where('userId', isEqualTo: _uid)
+      .where('status', isEqualTo: ReservationStatus.confirmed.name)
+      .orderBy('startTime')
+      .snapshots()
+      .map((s) => s.docs
+          .map(ZuReservation.fromFirestore)
+          .where((r) => r.startTime.isAfter(DateTime.now()))
+          .toList());
+
+  /// Retourne les startTime déjà réservés pour un court sur un jour donné.
+  Future<List<DateTime>> bookedSlots({
+    required String courtId,
+    required DateTime day,
+  }) async {
+    final start = DateTime(day.year, day.month, day.day);
+    final end   = start.add(const Duration(days: 1));
+    final snap  = await _db.collection('reservations')
+        .where('courtId', isEqualTo: courtId)
+        .where('status', isEqualTo: ReservationStatus.confirmed.name)
+        .where('startTime', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
+        .where('startTime', isLessThan: Timestamp.fromDate(end))
+        .get();
+    return snap.docs
+        .map(ZuReservation.fromFirestore)
+        .map((r) => r.startTime)
+        .toList();
+  }
+
+  /// Réserve atomiquement un créneau via Cloud Function (détection de conflit).
+  Future<String> bookSlot({
+    required String clubId,
+    required String clubName,
+    required String courtId,
+    required String courtName,
+    required DateTime startTime,
+    required int durationMinutes,
+    required int priceCredits,
+  }) async {
+    final result = await _functions.httpsCallable('bookCourtSlot').call({
+      'clubId':          clubId,
+      'clubName':        clubName,
+      'courtId':         courtId,
+      'courtName':       courtName,
+      'startTime':       startTime.toIso8601String(),
+      'durationMinutes': durationMinutes,
+      'priceCredits':    priceCredits,
+    });
+    final data = Map<String, dynamic>.from(result.data as Map);
+    return data['reservationId'] as String;
+  }
+
+  /// Annule une réservation et rembourse les crédits.
+  Future<void> cancelReservation(String reservationId) async {
+    final resRef  = _db.collection('reservations').doc(reservationId);
+    final userRef = _db.collection('users').doc(_uid);
+
+    await _db.runTransaction((tx) async {
+      final resDoc  = await tx.get(resRef);
+      final userDoc = await tx.get(userRef);
+      final res     = ZuReservation.fromFirestore(resDoc);
+      if (res.userId != _uid) throw Exception('Non autorisé');
+      if (res.status != ReservationStatus.confirmed) {
+        throw Exception('Réservation non annulable');
+      }
+      final credits = userDoc.data()?['credits'] as int? ?? 0;
+      tx.update(resRef, {'status': ReservationStatus.cancelled.name});
+      tx.update(userRef, {'credits': FieldValue.increment(res.priceCredits)});
+      tx.set(_db.collection('creditTransactions').doc(), {
+        'userId':        _uid,
+        'type':          CreditOpType.courtBookingRefund.name,
+        'amount':        res.priceCredits,
+        'balanceBefore': credits,
+        'balanceAfter':  credits + res.priceCredits,
+        'refId':         reservationId,
+        'description':   'Annulation terrain — ${res.courtName} @ ${res.clubName}',
+        'createdAt':     FieldValue.serverTimestamp(),
+      });
+    });
+  }
+}
+
+final reservationServiceProvider = Provider<ReservationService>((ref) => ReservationService());
+
+final myReservationsProvider = StreamProvider<List<ZuReservation>>((ref) {
+  final auth = ref.watch(authStateProvider).valueOrNull;
+  if (auth == null) return Stream.value([]);
+  return ref.watch(reservationServiceProvider).watchMyReservations();
+});
+
+// ══════════════════════════════════════════════
+//  MATCHMAKING SERVICE
+// ══════════════════════════════════════════════
+
+class MatchmakingService {
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+
+  String get _uid => _auth.currentUser!.uid;
+
+  /// Définit la disponibilité de l'utilisateur dans `userAvailability/{uid}`.
+  /// Récupère la position GPS actuelle si disponible.
+  Future<void> setAvailability({
+    required bool available,
+    int hours = 3,
+  }) async {
+    final expiresAt = DateTime.now().add(Duration(hours: hours));
+
+    // Récupère le niveau de l'user
+    final userDoc = await _db.collection('users').doc(_uid).get();
+    final level = userDoc.data()?['level'] as int? ?? 1;
+
+    GeoPoint? location;
+    if (!kIsWeb && available) {
+      try {
+        final locService = LocationService();
+        final pos = await locService.getCurrentPosition();
+        if (pos != null) {
+          location = GeoPoint(pos.latitude, pos.longitude);
+        }
+      } catch (_) {}
+    }
+
+    final data = <String, dynamic>{
+      'isAvailable': available,
+      'expiresAt':   Timestamp.fromDate(expiresAt),
+      'level':       level,
+      'updatedAt':   FieldValue.serverTimestamp(),
+    };
+    if (location != null) data['location'] = location;
+
+    await _db.collection('userAvailability').doc(_uid).set(data, SetOptions(merge: true));
+
+    // Met aussi à jour lastKnownLocation dans users/{uid} si on a la position
+    if (location != null) {
+      await _db.collection('users').doc(_uid).update({
+        'lastKnownLocation': location,
+      });
+    }
+  }
+
+  /// Met à jour `users/{uid}.lastKnownLocation` et `userAvailability/{uid}.location`.
+  Future<void> updateUserLocation() async {
+    if (kIsWeb) return;
+    try {
+      final locService = LocationService();
+      final pos = await locService.getCurrentPosition();
+      if (pos == null) return;
+      final geo = GeoPoint(pos.latitude, pos.longitude);
+
+      await _db.collection('users').doc(_uid).update({
+        'lastKnownLocation': geo,
+      });
+
+      // Met à jour la location dans userAvailability si le doc existe
+      final availDoc = await _db.collection('userAvailability').doc(_uid).get();
+      if (availDoc.exists) {
+        await _db.collection('userAvailability').doc(_uid).update({
+          'location': geo,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+    } catch (e) {
+      debugPrint('[MatchmakingService] updateUserLocation error: $e');
+    }
+  }
+
+  /// Retourne un stream de matchs ouverts scorés par compatibilité.
+  Stream<List<ScoredMatch>> watchSuggestedMatches({
+    required int userLevel,
+    GeoPoint? userLocation,
+    bool isAvailable = false,
+  }) {
+    return _db
+        .collection('matches')
+        .where('status', isEqualTo: MatchStatus.open.name)
+        .limit(50)
+        .snapshots()
+        .map((snap) {
+          final scored = snap.docs
+              .map(ZuMatch.fromFirestore)
+              .map((match) => _scoreMatch(
+                    match: match,
+                    userLevel: userLevel,
+                    userLocation: userLocation,
+                    isAvailable: isAvailable,
+                  ))
+              .where((sm) => sm.score > 0)
+              .toList()
+            ..sort((a, b) => b.score.compareTo(a.score));
+          return scored;
+        });
+  }
+
+  /// Calcule le score de compatibilité entre un joueur et un match.
+  ScoredMatch _scoreMatch({
+    required ZuMatch match,
+    required int userLevel,
+    required GeoPoint? userLocation,
+    required bool isAvailable,
+  }) {
+    // ── Level score (0–50) ──────────────────────────
+    int levelScore;
+    final bool exactLevel = userLevel >= match.levelMin && userLevel <= match.levelMax;
+    if (exactLevel) {
+      levelScore = 50;
+    } else if ((userLevel - match.levelMin).abs() == 1 ||
+               (userLevel - match.levelMax).abs() == 1) {
+      levelScore = 30;
+    } else {
+      levelScore = 0;
+    }
+
+    // ── Distance score (0–30) ───────────────────────
+    int distanceScore = 0;
+    double? distanceKm;
+    if (userLocation != null && match.location != null) {
+      final distM = Geolocator.distanceBetween(
+        userLocation.latitude, userLocation.longitude,
+        match.location!.latitude, match.location!.longitude,
+      );
+      distanceKm = distM / 1000;
+      if (distanceKm < 3) {
+        distanceScore = 30;
+      } else if (distanceKm < 10) {
+        distanceScore = 20;
+      } else if (distanceKm < 20) {
+        distanceScore = 10;
+      } else if (distanceKm < 30) {
+        distanceScore = 5;
+      } else {
+        distanceScore = 0;
+      }
+    }
+
+    // ── Availability bonus (0–20) ───────────────────
+    final int availBonus = isAvailable ? 20 : 0;
+
+    final int total = levelScore + distanceScore + availBonus;
+
+    return ScoredMatch(
+      match:      match,
+      score:      total,
+      distanceKm: distanceKm,
+      levelMatch: exactLevel,
+    );
+  }
+
+  /// Appelle la CF `getMatchSuggestions` et retourne les profils scorés.
+  Future<List<Map<String, dynamic>>> getMatchSuggestions(String matchId) async {
+    final result = await FirebaseFunctions.instanceFor(region: 'europe-west3')
+        .httpsCallable('getMatchSuggestions')
+        .call({'matchId': matchId});
+    final data = result.data as Map<String, dynamic>;
+    return List<Map<String, dynamic>>.from(data['suggestions'] as List);
+  }
+
+  /// Appelle la CF `invitePlayerToMatch`.
+  Future<void> invitePlayer({
+    required String matchId,
+    required String invitedUid,
+  }) async {
+    await FirebaseFunctions.instanceFor(region: 'europe-west3')
+        .httpsCallable('invitePlayerToMatch')
+        .call({'matchId': matchId, 'invitedUid': invitedUid});
+  }
+}
+
+final matchmakingServiceProvider = Provider<MatchmakingService>((ref) => MatchmakingService());
+
+/// Provider qui indique si l'utilisateur courant est disponible.
+final availabilityProvider = StreamProvider<UserAvailability?>((ref) {
+  final auth = ref.watch(authStateProvider).valueOrNull;
+  if (auth == null) return Stream.value(null);
+  return FirebaseFirestore.instance
+      .collection('userAvailability')
+      .doc(auth.uid)
+      .snapshots()
+      .map((d) => d.exists ? UserAvailability.fromFirestore(d) : null);
+});
+
+/// Provider de matchs suggérés (scorés) pour l'utilisateur courant.
+final suggestedMatchesProvider = StreamProvider<List<ScoredMatch>>((ref) {
+  final user     = ref.watch(currentUserProvider).valueOrNull;
+  final avail    = ref.watch(availabilityProvider).valueOrNull;
+  final position = ref.watch(userPositionProvider).valueOrNull;
+
+  if (user == null) return Stream.value([]);
+
+  GeoPoint? geo;
+  if (position != null) {
+    geo = GeoPoint(position.latitude, position.longitude);
+  } else if (user.lastKnownLocation != null) {
+    geo = user.lastKnownLocation;
+  }
+
+  return ref.watch(matchmakingServiceProvider).watchSuggestedMatches(
+    userLevel:    user.level,
+    userLocation: geo,
+    isAvailable:  avail?.isStillValid ?? false,
+  );
+});
+
+// ══════════════════════════════════════════════
+//  PLAYER MINI PROFILE (pour avatars dans les cards)
+// ══════════════════════════════════════════════
+
+/// Mini-profil léger pour affichage d'avatar dans les match cards.
+/// Mis en cache par Riverpod — un seul read Firestore par UID.
+class PlayerMini {
+  final String  firstName;
+  final String  lastName;
+  final String? photoUrl;
+
+  const PlayerMini({
+    required this.firstName,
+    required this.lastName,
+    this.photoUrl,
+  });
+
+  String get initials {
+    final f = firstName.isNotEmpty ? firstName[0].toUpperCase() : '';
+    final l = lastName.isNotEmpty  ? lastName[0].toUpperCase()  : '';
+    return '$f$l'.isEmpty ? '?' : '$f$l';
+  }
+}
+
+final playerMiniProvider = FutureProvider.family<PlayerMini?, String>((ref, uid) async {
+  if (uid.isEmpty) return null;
+  final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+  if (!doc.exists) return null;
+  final d = doc.data()!;
+  return PlayerMini(
+    firstName: d['firstName'] as String? ?? '',
+    lastName:  d['lastName']  as String? ?? '',
+    photoUrl:  d['photoUrl']  as String?,
+  );
+});
 
 // ══════════════════════════════════════════════
 //  USER STATS

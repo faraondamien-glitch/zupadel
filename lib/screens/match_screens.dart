@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -26,10 +27,12 @@ class _MatchListScreenState extends ConsumerState<MatchListScreen> {
   bool _geoDisabled  = false; // "Voir tous les matchs" — désactive le filtre 30 km
   final _searchCtrl  = TextEditingController();
   String _search     = '';
+  Timer? _debounce;
 
   @override
   void dispose() {
     _searchCtrl.dispose();
+    _debounce?.cancel();
     super.dispose();
   }
 
@@ -72,7 +75,12 @@ class _MatchListScreenState extends ConsumerState<MatchListScreen> {
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
             child: TextField(
               controller: _searchCtrl,
-              onChanged: (v) => setState(() => _search = v.trim().toLowerCase()),
+              onChanged: (v) {
+                _debounce?.cancel();
+                _debounce = Timer(const Duration(milliseconds: 300), () {
+                  if (mounted) setState(() => _search = v.trim().toLowerCase());
+                });
+              },
               decoration: InputDecoration(
                 hintText: 'Rechercher un club...',
                 prefixIcon: const Icon(Icons.search, size: 20),
@@ -116,10 +124,13 @@ class _MatchListScreenState extends ConsumerState<MatchListScreen> {
                     _filterType == MatchType.leisure ? null : MatchType.leisure),
                 ),
                 const SizedBox(width: 8),
-                _FilterChip(
-                  label: 'Mon niveau',
-                  active: _filterLevel != null,
-                  onTap: () => setState(() => _filterLevel = _filterLevel == null ? 4 : null),
+                Tooltip(
+                  message: 'Affiche uniquement les matchs compatibles avec ton niveau (±1)',
+                  child: _FilterChip(
+                    label: 'Niveau compatible',
+                    active: _filterLevel != null,
+                    onTap: () => setState(() => _filterLevel = _filterLevel == null ? 4 : null),
+                  ),
                 ),
               ],
             ),
@@ -231,18 +242,25 @@ class CreateMatchScreen extends ConsumerStatefulWidget {
 }
 
 class _CreateMatchScreenState extends ConsumerState<CreateMatchScreen> {
-  final _formKey = GlobalKey<FormState>();
+  // ── État du stepper ────────────────────────────────────────────
+  int _step = 0;
+  static const int _totalSteps = 3;
+
+  // ── Données du match ───────────────────────────────────────────
   final _clubController = TextEditingController();
   final _noteController = TextEditingController();
 
   DateTime _startTime = DateTime.now().add(const Duration(hours: 2));
-  int _duration = 90;
-  int _levelMin = 3;
-  int _levelMax = 5;
+  int _duration  = 90;
+  int _levelMin  = 3;
+  int _levelMax  = 5;
   int _maxPlayers = 4;
-  MatchType _type = MatchType.competitive;
+  MatchType       _type       = MatchType.competitive;
   MatchVisibility _visibility = MatchVisibility.public;
   bool _loading = false;
+
+  // ── Validation par étape ───────────────────────────────────────
+  bool get _step0Valid => _clubController.text.trim().isNotEmpty;
 
   @override
   void dispose() {
@@ -254,272 +272,375 @@ class _CreateMatchScreenState extends ConsumerState<CreateMatchScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Créer un match')),
-      body: Form(
-        key: _formKey,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            // Club
-            TextFormField(
-              controller: _clubController,
-              decoration: const InputDecoration(
-                labelText: 'Club / Lieu',
-                prefixIcon: Icon(Icons.location_on_outlined),
-              ),
-              validator: (v) => v?.isEmpty == true ? 'Requis' : null,
-            ),
-            const SizedBox(height: 16),
-
-            // Date & heure
-            ZuCard(
-              onTap: _pickDateTime,
-              child: Row(
-                children: [
-                  const Icon(Icons.calendar_today_outlined, color: ZuTheme.accent, size: 20),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Date et heure', style: Theme.of(context).textTheme.bodySmall),
-                        const SizedBox(height: 2),
-                        Text(
-                          DateFormat('EEE d MMM à HH:mm', 'fr_FR').format(_startTime),
-                          style: Theme.of(context).textTheme.headlineSmall,
-                        ),
-                      ],
-                    ),
-                  ),
-                  const Icon(Icons.chevron_right, color: ZuTheme.textSecondary),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Durée
-            ZuCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Durée : $_duration min', style: Theme.of(context).textTheme.headlineSmall),
-                  Slider(
-                    value: _duration.toDouble(),
-                    min: 60, max: 180, divisions: 4,
-                    activeColor: ZuTheme.accent,
-                    inactiveColor: ZuTheme.borderColor,
-                    label: '$_duration min',
-                    onChanged: (v) => setState(() => _duration = v.toInt()),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Niveau min
-            ZuCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Niveau minimum', style: Theme.of(context).textTheme.headlineSmall),
-                  const SizedBox(height: 12),
-                  ZuLevelSelector(
-                    initialLevel: _levelMin,
-                    onChanged: (l) => setState(() {
-                      _levelMin = l;
-                      if (_levelMax < l) _levelMax = l;
-                    }),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-
-            // Niveau max
-            ZuCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Niveau maximum', style: Theme.of(context).textTheme.headlineSmall),
-                  const SizedBox(height: 12),
-                  ZuLevelSelector(
-                    initialLevel: _levelMax,
-                    onChanged: (l) => setState(() {
-                      _levelMax = l;
-                      if (_levelMin > l) _levelMin = l;
-                    }),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Type
-            ZuCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Type de match', style: Theme.of(context).textTheme.headlineSmall),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: MatchType.values.map((t) {
-                      final label = switch (t) {
-                        MatchType.competitive => 'Compétitif',
-                        MatchType.leisure     => 'Loisir',
-                        MatchType.training    => 'Training',
-                      };
-                      final selected = _type == t;
-                      return Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 3),
-                          child: GestureDetector(
-                            onTap: () => setState(() => _type = t),
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 150),
-                              padding: const EdgeInsets.symmetric(vertical: 10),
-                              decoration: BoxDecoration(
-                                color: selected ? ZuTheme.accent : ZuTheme.bgCard,
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(
-                                  color: selected ? ZuTheme.accent : ZuTheme.borderColor,
-                                ),
-                              ),
-                              child: Text(
-                                label,
-                                textAlign: TextAlign.center,
-                                style: GoogleFonts.syne(
-                                  fontSize: 11, fontWeight: FontWeight.w700,
-                                  color: selected ? ZuTheme.bgPrimary : ZuTheme.textSecondary,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Nb joueurs
-            ZuCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Nombre de joueurs max', style: Theme.of(context).textTheme.headlineSmall),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [2, 4].map((n) {
-                      final sel = _maxPlayers == n;
-                      return Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 4),
-                          child: GestureDetector(
-                            onTap: () => setState(() => _maxPlayers = n),
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 150),
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              decoration: BoxDecoration(
-                                color: sel ? ZuTheme.accent : ZuTheme.bgCard,
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(color: sel ? ZuTheme.accent : ZuTheme.borderColor),
-                              ),
-                              child: Text(
-                                '$n joueurs',
-                                textAlign: TextAlign.center,
-                                style: GoogleFonts.syne(
-                                  fontSize: 13, fontWeight: FontWeight.w700,
-                                  color: sel ? ZuTheme.bgPrimary : ZuTheme.textSecondary,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Visibilité
-            ZuCard(
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Visibilité', style: Theme.of(context).textTheme.headlineSmall),
-                        const SizedBox(height: 3),
-                        Text(
-                          _visibility == MatchVisibility.public
-                            ? 'Visible par tous les joueurs à proximité'
-                            : 'Sur invitation uniquement',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      ],
-                    ),
-                  ),
-                  Switch(
-                    value: _visibility == MatchVisibility.public,
-                    onChanged: (v) => setState(() =>
-                      _visibility = v ? MatchVisibility.public : MatchVisibility.private,
-                    ),
-                    activeColor: ZuTheme.accent,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Note libre
-            TextFormField(
-              controller: _noteController,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                labelText: 'Commentaire (optionnel)',
-                alignLabelWithHint: true,
-              ),
-            ),
-            const SizedBox(height: 12),
-
-            // Info auto-validation
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: ZuTheme.accent.withOpacity(0.05),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: ZuTheme.accent.withOpacity(0.2)),
-              ),
-              child: Row(
-                children: [
-                  const Text('⚡', style: TextStyle(fontSize: 16)),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'Le match sera auto-validé à minuit si tu ne le confirmes pas toi-même.',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(color: ZuTheme.accent),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-
-            ZuButton(
-              label: 'Publier le match',
-              loading: _loading,
-              onPressed: _submit,
-            ),
-            const SizedBox(height: 40),
-          ],
+      appBar: AppBar(
+        title: Text(_stepTitle),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            if (_step == 0) {
+              context.pop();
+            } else {
+              setState(() => _step--);
+            }
+          },
         ),
       ),
+      body: Column(
+        children: [
+          // ── Barre de progression ─────────────────────────────
+          _StepProgressBar(current: _step, total: _totalSteps),
+
+          // ── Contenu de l'étape ───────────────────────────────
+          Expanded(
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 220),
+              transitionBuilder: (child, anim) => SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0.08, 0),
+                  end: Offset.zero,
+                ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOut)),
+                child: FadeTransition(opacity: anim, child: child),
+              ),
+              child: KeyedSubtree(
+                key: ValueKey(_step),
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 120),
+                  children: _buildStepContent(context),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+
+      // ── Bouton de navigation flottant ────────────────────────
+      bottomNavigationBar: _BottomNavBar(
+        step:      _step,
+        totalSteps: _totalSteps,
+        canNext:   _step == 0 ? _step0Valid : true,
+        loading:   _loading,
+        onNext:    _goNext,
+      ),
     );
+  }
+
+  String get _stepTitle => switch (_step) {
+    0 => 'Où et quand ?',
+    1 => 'Le match',
+    _ => 'Récapitulatif',
+  };
+
+  List<Widget> _buildStepContent(BuildContext context) => switch (_step) {
+    0 => _buildStep0(context),
+    1 => _buildStep1(context),
+    _ => _buildStep2(context),
+  };
+
+  // ── Étape 0 : Où & Quand ──────────────────────────────────────
+  List<Widget> _buildStep0(BuildContext context) => [
+    TextFormField(
+      controller: _clubController,
+      onChanged: (_) => setState(() {}), // refresh "canNext"
+      decoration: const InputDecoration(
+        labelText: 'Club / Lieu',
+        prefixIcon: Icon(Icons.location_on_outlined),
+        helperText: 'Ex : Padel de Paris, Boulogne…',
+      ),
+      textInputAction: TextInputAction.done,
+    ),
+    const SizedBox(height: 16),
+
+    ZuCard(
+      onTap: _pickDateTime,
+      child: Row(
+        children: [
+          const Icon(Icons.calendar_today_outlined, color: ZuTheme.accent, size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Date et heure', style: Theme.of(context).textTheme.bodySmall),
+                const SizedBox(height: 2),
+                Text(
+                  DateFormat('EEE d MMM à HH:mm', 'fr_FR').format(_startTime),
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+              ],
+            ),
+          ),
+          const Icon(Icons.chevron_right, color: ZuTheme.textSecondary),
+        ],
+      ),
+    ),
+    const SizedBox(height: 16),
+
+    Text('Durée', style: Theme.of(context).textTheme.headlineSmall),
+    const SizedBox(height: 10),
+    Row(
+      children: [60, 90, 120].map((d) {
+        final sel = _duration == d;
+        return Expanded(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: GestureDetector(
+              onTap: () => setState(() => _duration = d),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                decoration: BoxDecoration(
+                  color: sel ? ZuTheme.accent.withOpacity(0.15) : ZuTheme.bgCard,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: sel ? ZuTheme.accent : ZuTheme.borderColor,
+                    width: sel ? 1.5 : 1,
+                  ),
+                ),
+                child: Column(
+                  children: [
+                    Text(
+                      '$d',
+                      style: GoogleFonts.syne(
+                        fontSize: 20, fontWeight: FontWeight.w800,
+                        color: sel ? ZuTheme.accent : ZuTheme.textPrimary,
+                      ),
+                    ),
+                    Text(
+                      'min',
+                      style: GoogleFonts.dmSans(
+                        fontSize: 11, color: ZuTheme.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      }).toList(),
+    ),
+  ];
+
+  // ── Étape 1 : Le match ────────────────────────────────────────
+  List<Widget> _buildStep1(BuildContext context) => [
+    Text('Niveaux acceptés', style: Theme.of(context).textTheme.headlineSmall),
+    const SizedBox(height: 4),
+    Text(
+      'Niveau $_levelMin → $_levelMax  (sur 7)',
+      style: Theme.of(context).textTheme.bodySmall,
+    ),
+    const SizedBox(height: 8),
+    RangeSlider(
+      values: RangeValues(_levelMin.toDouble(), _levelMax.toDouble()),
+      min: 1, max: 7, divisions: 6,
+      activeColor: ZuTheme.accent,
+      inactiveColor: ZuTheme.borderColor,
+      labels: RangeLabels('$_levelMin', '$_levelMax'),
+      onChanged: (v) => setState(() {
+        _levelMin = v.start.round();
+        _levelMax = v.end.round();
+      }),
+    ),
+    const SizedBox(height: 20),
+
+    Text('Type de match', style: Theme.of(context).textTheme.headlineSmall),
+    const SizedBox(height: 10),
+    ...MatchType.values.map((t) {
+      final sel = _type == t;
+      final (emoji, label, sub) = switch (t) {
+        MatchType.competitive => ('🏆', 'Compétitif',  'Classement et mise enjeu activés'),
+        MatchType.leisure     => ('😊', 'Loisir',      'Détendu, sans enjeu'),
+        MatchType.training    => ('🎯', 'Training',    'Entraînement technique'),
+      };
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: GestureDetector(
+          onTap: () => setState(() => _type = t),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: sel ? ZuTheme.accent.withOpacity(0.1) : ZuTheme.bgCard,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: sel ? ZuTheme.accent : ZuTheme.borderColor,
+                width: sel ? 1.5 : 1,
+              ),
+            ),
+            child: Row(
+              children: [
+                Text(emoji, style: const TextStyle(fontSize: 24)),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(label,
+                        style: GoogleFonts.syne(
+                          fontSize: 15, fontWeight: FontWeight.w700,
+                          color: sel ? ZuTheme.accent : ZuTheme.textPrimary,
+                        )),
+                      const SizedBox(height: 2),
+                      Text(sub, style: Theme.of(context).textTheme.bodySmall),
+                    ],
+                  ),
+                ),
+                if (sel) Icon(Icons.check_circle, color: ZuTheme.accent, size: 20),
+              ],
+            ),
+          ),
+        ),
+      );
+    }),
+    const SizedBox(height: 20),
+
+    Text('Nombre de joueurs', style: Theme.of(context).textTheme.headlineSmall),
+    const SizedBox(height: 10),
+    Row(
+      children: [2, 4].map((n) {
+        final sel = _maxPlayers == n;
+        return Expanded(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: GestureDetector(
+              onTap: () => setState(() => _maxPlayers = n),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                decoration: BoxDecoration(
+                  color: sel ? ZuTheme.accent.withOpacity(0.12) : ZuTheme.bgCard,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: sel ? ZuTheme.accent : ZuTheme.borderColor,
+                    width: sel ? 1.5 : 1,
+                  ),
+                ),
+                child: Column(
+                  children: [
+                    Text(
+                      n == 2 ? '👥' : '👥👥',
+                      style: const TextStyle(fontSize: 22),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      '$n joueurs',
+                      style: GoogleFonts.syne(
+                        fontSize: 13, fontWeight: FontWeight.w700,
+                        color: sel ? ZuTheme.accent : ZuTheme.textPrimary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      }).toList(),
+    ),
+  ];
+
+  // ── Étape 2 : Récapitulatif ───────────────────────────────────
+  List<Widget> _buildStep2(BuildContext context) => [
+    ZuCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Récapitulatif', style: Theme.of(context).textTheme.displaySmall),
+          const Divider(height: 20),
+          _RecapRow(icon: '📍', label: _clubController.text.trim()),
+          _RecapRow(
+            icon: '📅',
+            label: DateFormat('EEE d MMM à HH:mm', 'fr_FR').format(_startTime),
+          ),
+          _RecapRow(icon: '⏱️', label: '$_duration min'),
+          _RecapRow(icon: '📊', label: 'Niveau $_levelMin → $_levelMax'),
+          _RecapRow(
+            icon: switch (_type) {
+              MatchType.competitive => '🏆',
+              MatchType.leisure     => '😊',
+              MatchType.training    => '🎯',
+            },
+            label: switch (_type) {
+              MatchType.competitive => 'Compétitif',
+              MatchType.leisure     => 'Loisir',
+              MatchType.training    => 'Training',
+            },
+          ),
+          _RecapRow(icon: '👥', label: '$_maxPlayers joueurs max'),
+        ],
+      ),
+    ),
+    const SizedBox(height: 16),
+
+    ZuCard(
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Visibilité', style: Theme.of(context).textTheme.headlineSmall),
+                const SizedBox(height: 3),
+                Text(
+                  _visibility == MatchVisibility.public
+                    ? 'Visible par tous les joueurs à proximité'
+                    : 'Sur invitation uniquement',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: _visibility == MatchVisibility.public,
+            onChanged: (v) => setState(() =>
+              _visibility = v ? MatchVisibility.public : MatchVisibility.private,
+            ),
+            activeColor: ZuTheme.accent,
+          ),
+        ],
+      ),
+    ),
+    const SizedBox(height: 16),
+
+    TextFormField(
+      controller: _noteController,
+      maxLines: 3,
+      decoration: const InputDecoration(
+        labelText: 'Message pour les joueurs (optionnel)',
+        alignLabelWithHint: true,
+      ),
+    ),
+    const SizedBox(height: 12),
+
+    Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: ZuTheme.accent.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: ZuTheme.accent.withOpacity(0.2)),
+      ),
+      child: Row(
+        children: [
+          const Text('⚡', style: TextStyle(fontSize: 16)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Le match sera auto-validé à minuit si tu ne le confirmes pas toi-même.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: ZuTheme.accent),
+            ),
+          ),
+        ],
+      ),
+    ),
+  ];
+
+  // ── Helpers ──────────────────────────────────────────────────
+  Future<void> _goNext() async {
+    if (_step < _totalSteps - 1) {
+      setState(() => _step++);
+    } else {
+      await _submit();
+    }
   }
 
   Future<void> _pickDateTime() async {
@@ -541,11 +662,12 @@ class _CreateMatchScreenState extends ConsumerState<CreateMatchScreen> {
       initialTime: TimeOfDay.fromDateTime(_startTime),
     );
     if (time == null) return;
-    setState(() => _startTime = DateTime(date.year, date.month, date.day, time.hour, time.minute));
+    setState(() =>
+      _startTime = DateTime(date.year, date.month, date.day, time.hour, time.minute),
+    );
   }
 
   Future<void> _submit() async {
-    if (!_formKey.currentState!.validate()) return;
     setState(() => _loading = true);
     try {
       final id = await ref.read(matchServiceProvider).createMatch(
@@ -566,6 +688,96 @@ class _CreateMatchScreenState extends ConsumerState<CreateMatchScreen> {
       if (mounted) setState(() => _loading = false);
     }
   }
+}
+
+// ── Barre de progression ─────────────────────────────────────────
+
+class _StepProgressBar extends StatelessWidget {
+  final int current;
+  final int total;
+  const _StepProgressBar({required this.current, required this.total});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+      child: Row(
+        children: List.generate(total, (i) {
+          final done   = i < current;
+          final active = i == current;
+          return Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(right: i < total - 1 ? 6 : 0),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 300),
+                height: 3,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(2),
+                  color: done || active ? ZuTheme.accent : ZuTheme.borderColor,
+                  boxShadow: active ? [
+                    BoxShadow(color: ZuTheme.accent.withOpacity(0.4), blurRadius: 4),
+                  ] : null,
+                ),
+              ),
+            ),
+          );
+        }),
+      ),
+    );
+  }
+}
+
+// ── Barre de navigation bas ───────────────────────────────────────
+
+class _BottomNavBar extends StatelessWidget {
+  final int step;
+  final int totalSteps;
+  final bool canNext;
+  final bool loading;
+  final VoidCallback onNext;
+
+  const _BottomNavBar({
+    required this.step,
+    required this.totalSteps,
+    required this.canNext,
+    required this.loading,
+    required this.onNext,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isLast = step == totalSteps - 1;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+        child: ZuButton(
+          label: isLast ? 'Publier le match · −1 crédit' : 'Suivant',
+          loading: loading,
+          onPressed: canNext ? onNext : null,
+        ),
+      ),
+    );
+  }
+}
+
+// ── Ligne recap ──────────────────────────────────────────────────
+
+class _RecapRow extends StatelessWidget {
+  final String icon;
+  final String label;
+  const _RecapRow({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 5),
+    child: Row(
+      children: [
+        Text(icon, style: const TextStyle(fontSize: 15)),
+        const SizedBox(width: 10),
+        Text(label, style: Theme.of(context).textTheme.bodyMedium),
+      ],
+    ),
+  );
 }
 
 // ══════════════════════════════════════════════
@@ -604,6 +816,11 @@ class MatchDetailScreen extends ConsumerWidget {
           body: ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              // Banner notifiedCount (visible uniquement pour l'organisateur juste après création)
+              if (isOrganizer && (match.notifiedCount ?? 0) > 0) ...[
+                _NotifiedBanner(count: match.notifiedCount!),
+                const SizedBox(height: 12),
+              ],
               // Status & info
               ZuCard(
                 child: Column(
@@ -698,26 +915,45 @@ class MatchDetailScreen extends ConsumerWidget {
                       Text('En attente (${match.pendingIds.length})',
                         style: Theme.of(context).textTheme.headlineSmall),
                       const SizedBox(height: 10),
-                      ...match.pendingIds.map((pid) => Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Row(
-                          children: [
-                            ZuAvatar(initials: '?', size: 32),
-                            const SizedBox(width: 10),
-                            const Expanded(child: Text('Joueur en attente')),
-                            TextButton(
-                              onPressed: () => _acceptPlayer(context, ref, match.id, pid),
-                              child: Text('Accepter',
-                                style: GoogleFonts.syne(fontSize: 11, color: ZuTheme.accent)),
-                            ),
-                            TextButton(
-                              onPressed: () => _refusePlayer(context, ref, match.id, pid),
-                              child: Text('Refuser',
-                                style: GoogleFonts.syne(fontSize: 11, color: ZuTheme.accentRed)),
-                            ),
-                          ],
-                        ),
-                      )),
+                      ...match.pendingIds.map((pid) {
+                        final mini = ref.watch(playerMiniProvider(pid)).valueOrNull;
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Row(
+                            children: [
+                              ZuAvatar(
+                                photoUrl: mini?.photoUrl,
+                                initials: mini?.initials ?? '?',
+                                size: 36,
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      mini != null
+                                          ? '${mini.firstName} ${mini.lastName}'.trim()
+                                          : 'Chargement…',
+                                      style: Theme.of(context).textTheme.bodyMedium,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              TextButton(
+                                onPressed: () => _acceptPlayer(context, ref, match.id, pid),
+                                child: Text('Accepter',
+                                  style: GoogleFonts.syne(fontSize: 11, color: ZuTheme.accent)),
+                              ),
+                              TextButton(
+                                onPressed: () => _refusePlayer(context, ref, match.id, pid),
+                                child: Text('Refuser',
+                                  style: GoogleFonts.syne(fontSize: 11, color: ZuTheme.accentRed)),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
                     ],
                   ],
                 ),
@@ -768,6 +1004,14 @@ class MatchDetailScreen extends ConsumerWidget {
                     ),
                   ),
                 ),
+                const SizedBox(height: 16),
+              ],
+
+              // Joueurs suggérés (organisateur, match pas plein)
+              if (isOrganizer && match.status == MatchStatus.open && !match.isFull) ...[
+                ZuSectionTitle('Joueurs suggérés'),
+                const SizedBox(height: 8),
+                _SuggestedPlayersSection(matchId: matchId),
                 const SizedBox(height: 16),
               ],
 
@@ -1003,6 +1247,179 @@ class _PostMatchReviewScreenState extends ConsumerState<PostMatchReviewScreen> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+}
+
+// ─── Banner notifiedCount ────────────────────────────────────────
+
+class _NotifiedBanner extends StatelessWidget {
+  final int count;
+  const _NotifiedBanner({required this.count});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+    decoration: BoxDecoration(
+      color: ZuTheme.accent.withOpacity(0.1),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: ZuTheme.accent.withOpacity(0.3)),
+    ),
+    child: Row(
+      children: [
+        const Text('⚡', style: TextStyle(fontSize: 18)),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            '$count joueur${count > 1 ? 's' : ''} compatible${count > 1 ? 's' : ''} notifié${count > 1 ? 's' : ''}',
+            style: GoogleFonts.dmSans(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: ZuTheme.accent,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+// ─── Joueurs suggérés ────────────────────────────────────────────
+
+class _SuggestedPlayersSection extends ConsumerStatefulWidget {
+  final String matchId;
+  const _SuggestedPlayersSection({required this.matchId});
+
+  @override
+  ConsumerState<_SuggestedPlayersSection> createState() => _SuggestedPlayersSectionState();
+}
+
+class _SuggestedPlayersSectionState extends ConsumerState<_SuggestedPlayersSection> {
+  bool _loading = true;
+  String? _error;
+  List<Map<String, dynamic>> _suggestions = [];
+  final Set<String> _invited = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSuggestions();
+  }
+
+  Future<void> _loadSuggestions() async {
+    try {
+      final result = await ref.read(matchmakingServiceProvider)
+          .getMatchSuggestions(widget.matchId);
+      if (mounted) {
+        setState(() {
+          _suggestions = result;
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() { _error = e.toString(); _loading = false; });
+    }
+  }
+
+  Future<void> _invite(String uid) async {
+    setState(() => _invited.add(uid));
+    try {
+      await ref.read(matchmakingServiceProvider)
+          .invitePlayer(matchId: widget.matchId, invitedUid: uid);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _invited.remove(uid));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur : $e')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_error != null) return const SizedBox.shrink();
+    if (_suggestions.isEmpty) {
+      return ZuCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Aucun joueur disponible pour l\'instant',
+              style: Theme.of(context).textTheme.headlineSmall,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Les joueurs compatibles apparaîtront ici quand ils activeront leur disponibilité.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            TextButton.icon(
+              onPressed: () {
+                setState(() => _loading = true);
+                _loadSuggestions();
+              },
+              icon: const Icon(Icons.refresh, size: 16),
+              label: const Text('Rafraîchir'),
+              style: TextButton.styleFrom(foregroundColor: ZuTheme.accent),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      children: _suggestions.map((s) {
+        final uid       = s['uid'] as String;
+        final firstName = s['firstName'] as String? ?? '';
+        final lastName  = s['lastName'] as String? ?? '';
+        final level     = s['level'] as int? ?? 1;
+        final photoUrl  = s['photoUrl'] as String?;
+        final score     = s['score'] as int? ?? 0;
+        final invited   = _invited.contains(uid);
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: ZuCard(
+            child: Row(
+              children: [
+                ZuAvatar(
+                  photoUrl:  photoUrl,
+                  initials:  '${firstName.isNotEmpty ? firstName[0] : '?'}${lastName.isNotEmpty ? lastName[0] : ''}',
+                  size: 36,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '$firstName $lastName',
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                      Text(
+                        'Niveau $level · $score pts de compatibilité',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                if (invited)
+                  ZuTag('Invité', style: ZuTagStyle.green)
+                else
+                  TextButton(
+                    onPressed: () => _invite(uid),
+                    child: Text(
+                      'Inviter',
+                      style: GoogleFonts.syne(fontSize: 12, color: ZuTheme.accent),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      }).toList(),
+    );
   }
 }
 
