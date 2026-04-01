@@ -67,6 +67,8 @@ class ZuTag extends StatelessWidget {
       decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
       child: Text(
         label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: GoogleFonts.syne(fontSize: 11, fontWeight: FontWeight.w600, color: fg),
       ),
     );
@@ -343,9 +345,9 @@ class ZuPlayerSlots extends ConsumerWidget {
                     style: BorderStyle.solid,
                     width: 1.5,
                   ),
-                  color: ZuTheme.accent.withOpacity(0.04),
+                  color: ZuTheme.accent.withOpacity(0.08),
                 ),
-                child: Icon(Icons.person_add_alt, size: 14, color: ZuTheme.accent.withOpacity(0.4)),
+                child: Icon(Icons.person_add_alt, size: 14, color: ZuTheme.accent.withOpacity(0.5)),
               ),
             );
           }
@@ -361,7 +363,7 @@ class ZuPlayerSlots extends ConsumerWidget {
                 photoUrl: mini?.photoUrl,
                 initials: mini?.initials ?? '?',
                 size: avatarSize,
-                bgColor: _colors[i % _colors.length],
+                bgColor: ZuTheme.playerColors[i % ZuTheme.playerColors.length],
               ),
             ),
           );
@@ -370,12 +372,6 @@ class ZuPlayerSlots extends ConsumerWidget {
     );
   }
 
-  static const _colors = [
-    Color(0xFF1E3A2A),
-    Color(0xFF1E2A3A),
-    Color(0xFF2A1E3A),
-    Color(0xFF3A2A1E),
-  ];
 }
 
 // ─── ZuLevelSelector ────────────────────────────────────────────
@@ -565,9 +561,7 @@ class ZuTournamentCard extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [const Color(0xFF1A2510), const Color(0xFF0F1A1A)],
-              ),
+              gradient: ZuTheme.cardGradient,
               borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
             ),
             child: Row(
@@ -797,17 +791,55 @@ class ZuEmptyState extends StatelessWidget {
 
 // ─── ZuShimmer ──────────────────────────────────────────────────
 
-class ZuShimmerCard extends StatelessWidget {
+class ZuShimmerCard extends StatefulWidget {
   const ZuShimmerCard({super.key});
 
   @override
+  State<ZuShimmerCard> createState() => _ZuShimmerCardState();
+}
+
+class _ZuShimmerCardState extends State<ZuShimmerCard>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double> _anim;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat();
+    _anim = Tween<double>(begin: -1.5, end: 1.5).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 140,
-      decoration: BoxDecoration(
-        color: ZuTheme.bgCard,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: ZuTheme.borderColor),
+    return AnimatedBuilder(
+      animation: _anim,
+      builder: (_, __) => Container(
+        height: 140,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: ZuTheme.borderColor),
+          gradient: LinearGradient(
+            begin: Alignment(_anim.value - 1, 0),
+            end:   Alignment(_anim.value + 1, 0),
+            colors: const [
+              Color(0xFF1E2230),
+              Color(0xFF2A2E3E),
+              Color(0xFF1E2230),
+            ],
+          ),
+        ),
       ),
     );
   }

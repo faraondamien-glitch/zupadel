@@ -38,9 +38,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       try {
         await ref.read(matchmakingServiceProvider)
             .setAvailability(available: true, hours: hours);
-      } catch (e) {
+      } catch (_) {
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erreur : $e')),
+          const SnackBar(content: Text('Impossible d\'activer la disponibilité. Réessaie.')),
         );
       } finally {
         if (mounted) setState(() => _togglingAvail = false);
@@ -51,9 +51,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       try {
         await ref.read(matchmakingServiceProvider)
             .setAvailability(available: false);
-      } catch (e) {
+      } catch (_) {
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erreur : $e')),
+          const SnackBar(content: Text('Impossible de désactiver. Réessaie.')),
         );
       } finally {
         if (mounted) setState(() => _togglingAvail = false);
@@ -173,11 +173,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   childCount: 2,
                 ),
               ),
-              error: (e, _) => SliverToBoxAdapter(
+              error: (_, __) => SliverToBoxAdapter(
                 child: ZuEmptyState(
                   emoji: '⚠️',
-                  title: 'Erreur de chargement',
-                  subtitle: e.toString(),
+                  title: 'Impossible de charger',
+                  subtitle: 'Vérifie ta connexion et tire vers le bas pour réessayer.',
                 ),
               ),
               data: (list) => list.isEmpty
@@ -401,11 +401,7 @@ class _HeroHeader extends StatelessWidget {
 
     return Container(
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF1A2A18), Color(0xFF0D0F14)],
-        ),
+        gradient: ZuTheme.heroGradient,
         border: Border(bottom: BorderSide(color: ZuTheme.borderColor)),
       ),
       padding: EdgeInsets.fromLTRB(20, MediaQuery.of(context).padding.top + 16, 20, 20),
@@ -907,10 +903,10 @@ class _JoinMatchSheetState extends State<_JoinMatchSheet> {
           ),
         );
       }
-    } catch (e) {
+    } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erreur : $e')),
+          const SnackBar(content: Text('Impossible de rejoindre ce match. Réessaie.')),
         );
       }
     } finally {
