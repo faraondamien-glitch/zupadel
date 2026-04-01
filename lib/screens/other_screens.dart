@@ -1006,7 +1006,7 @@ class ProfileScreen extends ConsumerWidget {
   void _shareReferral(BuildContext context, String? code) {
     if (code == null) return;
     Share.share(
-      'Rejoins-moi sur Zupadel ! Utilise mon code $code pour recevoir 5 crédits offerts.\n\nhttps://zupadel.app',
+      'Rejoins-moi sur Zupadel ! Utilise mon code $code pour recevoir 5 crédits offerts.\n\nhttps://zupadel.fr',
       subject: 'Code parrainage Zupadel',
     );
   }
@@ -1934,7 +1934,7 @@ class _StatsCard extends StatelessWidget {
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 12),
                           child: Text(
-                            'zupadel.app',
+                            'zupadel.fr',
                             style: GoogleFonts.dmSans(
                               fontSize: 10, color: ZuTheme.textSecondary, letterSpacing: 0.5,
                             ),
