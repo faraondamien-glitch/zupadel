@@ -1,5 +1,7 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
@@ -40,6 +42,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final matches   = ref.watch(nearbyMatchesProvider);
     final avail     = ref.watch(availabilityProvider).valueOrNull;
     final suggested = ref.watch(suggestedMatchesProvider);
+    final position  = ref.watch(userPositionProvider); // AsyncValue<Position?>
 
     return Scaffold(
       backgroundColor: ZuTheme.bgPrimary,
@@ -89,11 +92,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               error: (_, __) => const SliverToBoxAdapter(child: SizedBox.shrink()),
               data: (list) => list.isEmpty
                   ? SliverToBoxAdapter(
-                      child: ZuCard(
-                        child: Text(
-                          'Active ta disponibilité pour voir les matchs compatibles avec ton niveau.',
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: ZuTheme.textSecondary),
-                        ),
+                      child: _SuggestedEmptyState(
+                        isAvailable:       avail?.isStillValid ?? false,
+                        onActivate:        () => _toggleAvailability(avail),
+                        togglingAvail:     _togglingAvail,
                       ),
                     )
                   : SliverList(
@@ -155,12 +157,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               ),
               data: (list) => list.isEmpty
                   ? SliverToBoxAdapter(
-                      child: ZuEmptyState(
-                        emoji: '🎾',
-                        title: 'Aucun match à proximité',
-                        subtitle: 'Sois le premier à créer un match !',
-                        buttonLabel: 'Créer un match',
-                        onButton: () => context.go('/matches/create'),
+                      child: _NearbyEmptyState(
+                        position:  position,
+                        onCreate:  () => context.go('/matches/create'),
                       ),
                     )
                   : SliverList(
@@ -399,6 +398,139 @@ class _HeroHeader extends StatelessWidget {
     final diff = dt.difference(DateTime.now());
     if (diff.inMinutes < 60) return 'dans ${diff.inMinutes} min';
     return 'dans ${diff.inHours}h';
+  }
+}
+
+// ─── Empty states contextuels ───────────────────────────────────
+
+/// Empty state "Matchs pour toi" — distingue dispo inactive vs vraiment vide.
+class _SuggestedEmptyState extends StatelessWidget {
+  final bool         isAvailable;
+  final VoidCallback onActivate;
+  final bool         togglingAvail;
+
+  const _SuggestedEmptyState({
+    required this.isAvailable,
+    required this.onActivate,
+    required this.togglingAvail,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (!isAvailable) {
+      // L'utilisateur n'est pas disponible → CTA pour activer
+      return ZuCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '⚡ Active ta disponibilité',
+              style: Theme.of(context).textTheme.headlineSmall,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Dis-nous que tu es prêt à jouer et on te trouve les meilleurs matchs compatibles avec ton niveau.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              child: ZuButton(
+                label: togglingAvail ? 'Activation…' : 'Je suis disponible maintenant',
+                onPressed: togglingAvail ? null : onActivate,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Disponible mais aucun match compatible trouvé
+    return ZuCard(
+      child: Row(
+        children: [
+          const Text('🔍', style: TextStyle(fontSize: 28)),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Aucun match compatible',
+                  style: Theme.of(context).textTheme.headlineSmall),
+                const SizedBox(height: 4),
+                Text(
+                  'Pas de match ouvert à ton niveau pour l\'instant. On te notifiera dès qu\'un match apparaît.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Empty state "Matchs près de toi" — distingue géo refusée vs vraiment vide.
+class _NearbyEmptyState extends StatelessWidget {
+  final AsyncValue<Position?> position;
+  final VoidCallback          onCreate;
+
+  const _NearbyEmptyState({required this.position, required this.onCreate});
+
+  @override
+  Widget build(BuildContext context) {
+    // Géo en cours de chargement → ne rien afficher (shimmer déjà géré ailleurs)
+    if (position.isLoading) return const SizedBox.shrink();
+
+    // Géo chargée mais null → permission refusée
+    final pos = position.valueOrNull;
+    if (pos == null && !kIsWeb) {
+      return ZuCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '📍 Géolocalisation désactivée',
+              style: Theme.of(context).textTheme.headlineSmall,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Active la géolocalisation pour voir les matchs près de chez toi.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: ZuButton(
+                    label: 'Ouvrir les réglages',
+                    outlined: true,
+                    onPressed: () => Geolocator.openAppSettings(),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: ZuButton(
+                    label: 'Créer un match',
+                    onPressed: onCreate,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Géo ok mais vraiment aucun match → inviter à créer
+    return ZuEmptyState(
+      emoji: '🎾',
+      title: 'Aucun match à proximité',
+      subtitle: 'Sois le premier à créer un match !',
+      buttonLabel: 'Créer un match',
+      onButton: onCreate,
+    );
   }
 }
 

@@ -1072,9 +1072,29 @@ class _SuggestedPlayersSectionState extends ConsumerState<_SuggestedPlayersSecti
     if (_error != null) return const SizedBox.shrink();
     if (_suggestions.isEmpty) {
       return ZuCard(
-        child: Text(
-          'Aucun joueur disponible compatible pour l\'instant.',
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: ZuTheme.textSecondary),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Aucun joueur disponible pour l\'instant',
+              style: Theme.of(context).textTheme.headlineSmall,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Les joueurs compatibles apparaîtront ici quand ils activeront leur disponibilité.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            TextButton.icon(
+              onPressed: () {
+                setState(() => _loading = true);
+                _loadSuggestions();
+              },
+              icon: const Icon(Icons.refresh, size: 16),
+              label: const Text('Rafraîchir'),
+              style: TextButton.styleFrom(foregroundColor: ZuTheme.accent),
+            ),
+          ],
         ),
       );
     }
