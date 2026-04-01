@@ -141,6 +141,7 @@ class ZuMatch {
   final List<String> bettorIds;   // joueurs ayant placé une mise
   final double? avgRating;
   final int ratingCount;
+  final int? notifiedCount;
   final DateTime createdAt;
 
   const ZuMatch({
@@ -165,6 +166,7 @@ class ZuMatch {
     this.bettorIds = const [],
     this.avgRating,
     required this.ratingCount,
+    this.notifiedCount,
     required this.createdAt,
   });
 
@@ -192,6 +194,7 @@ class ZuMatch {
       bettorIds:       List<String>.from(d['bettorIds'] ?? []),
       avgRating:       (d['avgRating'] as num?)?.toDouble(),
       ratingCount:     d['ratingCount'] ?? 0,
+      notifiedCount:   d['notifiedCount'] as int?,
       createdAt:       (d['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }

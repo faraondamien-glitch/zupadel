@@ -14,6 +14,7 @@ import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuth;
+import 'package:cloud_firestore/cloud_firestore.dart' show FirebaseFirestore;
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:path_provider/path_provider.dart';
@@ -899,7 +900,29 @@ class ProfileScreen extends ConsumerWidget {
             sliver: SliverToBoxAdapter(
               child: stats == null
                   ? const ZuShimmerCard()
-                  : _StatsGrid(stats: stats),
+                  : stats.matchesPlayed == 0
+                      ? ZuCard(
+                          child: Column(
+                            children: [
+                              const Text('🎾', style: TextStyle(fontSize: 36)),
+                              const SizedBox(height: 10),
+                              Text(
+                                'Pas encore de stats',
+                                style: GoogleFonts.syne(
+                                  fontSize: 15, fontWeight: FontWeight.w700,
+                                  color: ZuTheme.textPrimary,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                'Joue ton premier match pour voir tes statistiques ici !',
+                                style: Theme.of(context).textTheme.bodySmall,
+                                textAlign: TextAlign.center,
+                              ),
+                            ],
+                          ),
+                        )
+                      : _StatsGrid(stats: stats),
             ),
           ),
 
@@ -936,8 +959,12 @@ class ProfileScreen extends ConsumerWidget {
                     _MenuRow(
                       icon: '🤝',
                       label: 'Code parrainage',
-                      trailing: ZuTag(user?.referralCode ?? '...', style: ZuTagStyle.green),
-                      onTap: () => _shareReferral(context, user?.referralCode),
+                      trailing: (user?.referralCode.isNotEmpty ?? false)
+                          ? ZuTag(user!.referralCode, style: ZuTagStyle.green)
+                          : ZuTag('Génération…', style: ZuTagStyle.neutral),
+                      onTap: (user?.referralCode.isNotEmpty ?? false)
+                          ? () => _shareReferral(context, user?.referralCode)
+                          : null,
                     ),
                     const Divider(height: 1),
                     _MenuRow(
@@ -1100,6 +1127,7 @@ class CreditsScreen extends ConsumerStatefulWidget {
 class _CreditsScreenState extends ConsumerState<CreditsScreen> {
   String? _loadingPack;
   StreamSubscription<String>? _iapErrorSub;
+  int _visibleTxCount = 10;
 
   @override
   void didChangeDependencies() {
@@ -1197,8 +1225,15 @@ class _CreditsScreenState extends ConsumerState<CreditsScreen> {
                 Text('crédits', style: Theme.of(context).textTheme.bodySmall),
                 const SizedBox(height: 4),
                 Text(
-                  '≈ ${((user?.credits ?? 0) * 0.5).toStringAsFixed(2)} €',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: ZuTheme.textSecondary),
+                  '≈ ${((user?.credits ?? 0) * 0.5).toStringAsFixed(2)} € de valeur',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: ZuTheme.textSecondary),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '1 crédit ≈ 0,50 € à l\'achat',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: ZuTheme.textSecondary, fontSize: 11,
+                  ),
                 ),
               ],
             ),
@@ -1224,14 +1259,42 @@ class _CreditsScreenState extends ConsumerState<CreditsScreen> {
           txs.when(
             loading: () => const ZuShimmerCard(),
             error: (e, _) => Text('$e'),
-            data: (list) => list.isEmpty
-                ? ZuCard(child: Text('Aucune transaction', style: Theme.of(context).textTheme.bodySmall))
-                : ZuCard(
+            data: (list) {
+              if (list.isEmpty) {
+                return ZuCard(
+                  child: Text('Aucune transaction', style: Theme.of(context).textTheme.bodySmall),
+                );
+              }
+              final visible  = list.take(_visibleTxCount).toList();
+              final hasMore  = list.length > _visibleTxCount;
+              return Column(
+                children: [
+                  ZuCard(
                     padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
                     child: Column(
-                      children: list.take(20).map((tx) => _TxRow(tx: tx)).toList(),
+                      children: visible.map((tx) => _TxRow(tx: tx)).toList(),
                     ),
                   ),
+                  if (hasMore) ...[
+                    const SizedBox(height: 8),
+                    TextButton(
+                      onPressed: () => setState(() => _visibleTxCount += 10),
+                      child: Text(
+                        'Voir ${(list.length - _visibleTxCount).clamp(0, 10)} transaction${list.length - _visibleTxCount > 1 ? 's' : ''} de plus',
+                        style: GoogleFonts.syne(fontSize: 13, color: ZuTheme.accent),
+                      ),
+                    ),
+                  ] else if (list.length > 10) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Toutes les transactions affichées (${list.length})',
+                      style: Theme.of(context).textTheme.bodySmall,
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ],
+              );
+            },
           ),
           const SizedBox(height: 40),
         ],
@@ -1872,46 +1935,111 @@ class NotificationSettingsScreen extends ConsumerStatefulWidget {
 
 class _NotificationSettingsScreenState
     extends ConsumerState<NotificationSettingsScreen> {
-  bool _matchInvites    = true;
-  bool _matchAccepted   = true;
-  bool _matchCancelled  = true;
-  bool _matchFinished   = true;
-  bool _tournaments     = true;
-  bool _coaching        = true;
+  // Valeurs locales (initialisées depuis Firestore au chargement)
+  bool _matchInvites   = true;
+  bool _matchAccepted  = true;
+  bool _matchCancelled = true;
+  bool _matchFinished  = true;
+  bool _tournaments    = true;
+  bool _coaching       = true;
+  bool _loaded         = false;
+  bool _saving         = false;
+
+  static const _prefsKey = 'notifPrefs';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFromFirestore();
+  }
+
+  Future<void> _loadFromFirestore() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+    final prefs = doc.data()?[_prefsKey] as Map<String, dynamic>?;
+    if (prefs != null && mounted) {
+      setState(() {
+        _matchInvites   = prefs['matchInvites']   as bool? ?? true;
+        _matchAccepted  = prefs['matchAccepted']  as bool? ?? true;
+        _matchCancelled = prefs['matchCancelled'] as bool? ?? true;
+        _matchFinished  = prefs['matchFinished']  as bool? ?? true;
+        _tournaments    = prefs['tournaments']    as bool? ?? true;
+        _coaching       = prefs['coaching']       as bool? ?? true;
+        _loaded         = true;
+      });
+    } else if (mounted) {
+      setState(() => _loaded = true);
+    }
+  }
+
+  Future<void> _save() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    setState(() => _saving = true);
+    await FirebaseFirestore.instance.collection('users').doc(uid).update({
+      _prefsKey: {
+        'matchInvites':   _matchInvites,
+        'matchAccepted':  _matchAccepted,
+        'matchCancelled': _matchCancelled,
+        'matchFinished':  _matchFinished,
+        'tournaments':    _tournaments,
+        'coaching':       _coaching,
+      },
+    });
+    if (mounted) setState(() => _saving = false);
+  }
+
+  void _toggle(bool value, void Function(bool) setter) {
+    setter(value);
+    _save();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Notifications')),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
-        children: [
-          ZuCard(
-            child: Column(
-              children: [
-                _NotifRow('Nouveaux matchs près de moi', _matchInvites,
-                    (v) => setState(() => _matchInvites = v)),
-                _NotifRow('Demande acceptée', _matchAccepted,
-                    (v) => setState(() => _matchAccepted = v)),
-                _NotifRow('Match annulé', _matchCancelled,
-                    (v) => setState(() => _matchCancelled = v)),
-                _NotifRow('Match terminé (avis)', _matchFinished,
-                    (v) => setState(() => _matchFinished = v)),
-                _NotifRow('Tournois', _tournaments,
-                    (v) => setState(() => _tournaments = v)),
-                _NotifRow('Coaching', _coaching,
-                    (v) => setState(() => _coaching = v)),
-              ],
+      appBar: AppBar(
+        title: const Text('Notifications'),
+        actions: [
+          if (_saving)
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: SizedBox(width: 18, height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2)),
             ),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            'Les préférences de notifications sont sauvegardées localement.',
-            style: Theme.of(context).textTheme.bodySmall,
-            textAlign: TextAlign.center,
-          ),
         ],
       ),
+      body: _loaded
+          ? ListView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+              children: [
+                ZuCard(
+                  child: Column(
+                    children: [
+                      _NotifRow('Nouveaux matchs près de moi', _matchInvites,
+                          (v) => setState(() => _toggle(v, (x) => _matchInvites = x))),
+                      _NotifRow('Demande acceptée', _matchAccepted,
+                          (v) => setState(() => _toggle(v, (x) => _matchAccepted = x))),
+                      _NotifRow('Match annulé', _matchCancelled,
+                          (v) => setState(() => _toggle(v, (x) => _matchCancelled = x))),
+                      _NotifRow('Match terminé (avis)', _matchFinished,
+                          (v) => setState(() => _toggle(v, (x) => _matchFinished = x))),
+                      _NotifRow('Tournois', _tournaments,
+                          (v) => setState(() => _toggle(v, (x) => _tournaments = x))),
+                      _NotifRow('Coaching', _coaching,
+                          (v) => setState(() => _toggle(v, (x) => _coaching = x))),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Sauvegardé sur ton compte — synchronisé sur tous tes appareils.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            )
+          : const Center(child: CircularProgressIndicator()),
     );
   }
 }

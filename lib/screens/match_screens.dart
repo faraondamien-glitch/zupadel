@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -26,10 +27,12 @@ class _MatchListScreenState extends ConsumerState<MatchListScreen> {
   bool _geoDisabled  = false; // "Voir tous les matchs" — désactive le filtre 30 km
   final _searchCtrl  = TextEditingController();
   String _search     = '';
+  Timer? _debounce;
 
   @override
   void dispose() {
     _searchCtrl.dispose();
+    _debounce?.cancel();
     super.dispose();
   }
 
@@ -72,7 +75,12 @@ class _MatchListScreenState extends ConsumerState<MatchListScreen> {
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
             child: TextField(
               controller: _searchCtrl,
-              onChanged: (v) => setState(() => _search = v.trim().toLowerCase()),
+              onChanged: (v) {
+                _debounce?.cancel();
+                _debounce = Timer(const Duration(milliseconds: 300), () {
+                  if (mounted) setState(() => _search = v.trim().toLowerCase());
+                });
+              },
               decoration: InputDecoration(
                 hintText: 'Rechercher un club...',
                 prefixIcon: const Icon(Icons.search, size: 20),
@@ -116,10 +124,13 @@ class _MatchListScreenState extends ConsumerState<MatchListScreen> {
                     _filterType == MatchType.leisure ? null : MatchType.leisure),
                 ),
                 const SizedBox(width: 8),
-                _FilterChip(
-                  label: 'Mon niveau',
-                  active: _filterLevel != null,
-                  onTap: () => setState(() => _filterLevel = _filterLevel == null ? 4 : null),
+                Tooltip(
+                  message: 'Affiche uniquement les matchs compatibles avec ton niveau (±1)',
+                  child: _FilterChip(
+                    label: 'Niveau compatible',
+                    active: _filterLevel != null,
+                    onTap: () => setState(() => _filterLevel = _filterLevel == null ? 4 : null),
+                  ),
                 ),
               ],
             ),
@@ -805,6 +816,11 @@ class MatchDetailScreen extends ConsumerWidget {
           body: ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              // Banner notifiedCount (visible uniquement pour l'organisateur juste après création)
+              if (isOrganizer && (match.notifiedCount ?? 0) > 0) ...[
+                _NotifiedBanner(count: match.notifiedCount!),
+                const SizedBox(height: 12),
+              ],
               // Status & info
               ZuCard(
                 child: Column(
@@ -899,26 +915,45 @@ class MatchDetailScreen extends ConsumerWidget {
                       Text('En attente (${match.pendingIds.length})',
                         style: Theme.of(context).textTheme.headlineSmall),
                       const SizedBox(height: 10),
-                      ...match.pendingIds.map((pid) => Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Row(
-                          children: [
-                            ZuAvatar(initials: '?', size: 32),
-                            const SizedBox(width: 10),
-                            const Expanded(child: Text('Joueur en attente')),
-                            TextButton(
-                              onPressed: () => _acceptPlayer(context, ref, match.id, pid),
-                              child: Text('Accepter',
-                                style: GoogleFonts.syne(fontSize: 11, color: ZuTheme.accent)),
-                            ),
-                            TextButton(
-                              onPressed: () => _refusePlayer(context, ref, match.id, pid),
-                              child: Text('Refuser',
-                                style: GoogleFonts.syne(fontSize: 11, color: ZuTheme.accentRed)),
-                            ),
-                          ],
-                        ),
-                      )),
+                      ...match.pendingIds.map((pid) {
+                        final mini = ref.watch(playerMiniProvider(pid)).valueOrNull;
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Row(
+                            children: [
+                              ZuAvatar(
+                                photoUrl: mini?.photoUrl,
+                                initials: mini?.initials ?? '?',
+                                size: 36,
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      mini != null
+                                          ? '${mini.firstName} ${mini.lastName}'.trim()
+                                          : 'Chargement…',
+                                      style: Theme.of(context).textTheme.bodyMedium,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              TextButton(
+                                onPressed: () => _acceptPlayer(context, ref, match.id, pid),
+                                child: Text('Accepter',
+                                  style: GoogleFonts.syne(fontSize: 11, color: ZuTheme.accent)),
+                              ),
+                              TextButton(
+                                onPressed: () => _refusePlayer(context, ref, match.id, pid),
+                                child: Text('Refuser',
+                                  style: GoogleFonts.syne(fontSize: 11, color: ZuTheme.accentRed)),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
                     ],
                   ],
                 ),
@@ -1213,6 +1248,39 @@ class _PostMatchReviewScreenState extends ConsumerState<PostMatchReviewScreen> {
       if (mounted) setState(() => _loading = false);
     }
   }
+}
+
+// ─── Banner notifiedCount ────────────────────────────────────────
+
+class _NotifiedBanner extends StatelessWidget {
+  final int count;
+  const _NotifiedBanner({required this.count});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+    decoration: BoxDecoration(
+      color: ZuTheme.accent.withOpacity(0.1),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: ZuTheme.accent.withOpacity(0.3)),
+    ),
+    child: Row(
+      children: [
+        const Text('⚡', style: TextStyle(fontSize: 18)),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            '$count joueur${count > 1 ? 's' : ''} compatible${count > 1 ? 's' : ''} notifié${count > 1 ? 's' : ''}',
+            style: GoogleFonts.dmSans(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: ZuTheme.accent,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 // ─── Joueurs suggérés ────────────────────────────────────────────
