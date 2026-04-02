@@ -1,5 +1,7 @@
+import 'package:cloud_firestore/cloud_firestore.dart' show GeoPoint;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -81,7 +83,7 @@ class _LeaderboardScreenState extends ConsumerState<LeaderboardScreen>
                   onLevelChanged: (l) => setState(() => _selectedLevel = l),
                 ),
                 _LeaderboardTab(filter: const LeaderboardFilter('weekly')),
-                _CityLeaderboardTab(),
+                const _LocalLeaderboardTab(),
               ],
             ),
           ),
@@ -265,10 +267,175 @@ class _LevelLeaderboardTab extends ConsumerWidget {
 
 // ── Tab ma ville ─────────────────────────────────────────────────
 
-class _CityLeaderboardTab extends ConsumerWidget {
+// ══════════════════════════════════════════════
+//  TAB "Ma région" — ville ou géolocalisation
+// ══════════════════════════════════════════════
+
+class _LocalLeaderboardTab extends ConsumerStatefulWidget {
+  const _LocalLeaderboardTab();
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_LocalLeaderboardTab> createState() => _LocalLeaderboardTabState();
+}
+
+class _LocalLeaderboardTabState extends ConsumerState<_LocalLeaderboardTab> {
+  // Mode : 'city' (nom de la ville) ou 'geo' (géolocalisation)
+  String _mode = 'city';
+  double _radiusKm = 30;
+  Position? _position;
+  bool _loadingGeo = false;
+  String? _geoError;
+
+  static const _radii = [10.0, 30.0, 50.0, 100.0];
+
+  Future<void> _requestGeo() async {
+    setState(() { _loadingGeo = true; _geoError = null; });
+    try {
+      final svc = ref.read(locationServiceProvider);
+      final pos = await svc.getCurrentPosition();
+      if (pos == null) {
+        setState(() { _geoError = 'Localisation refusée ou indisponible.'; });
+      } else {
+        setState(() { _position = pos; _mode = 'geo'; });
+      }
+    } catch (e) {
+      setState(() { _geoError = 'Impossible d\'obtenir la position.'; });
+    } finally {
+      setState(() { _loadingGeo = false; });
+    }
+  }
+
+  List<ZuRanking> _filterByDistance(List<ZuRanking> all) {
+    if (_position == null) return [];
+    return all.where((r) {
+      if (r.location == null) return false;
+      final distM = Geolocator.distanceBetween(
+        _position!.latitude, _position!.longitude,
+        r.location!.latitude, r.location!.longitude,
+      );
+      return distM / 1000 <= _radiusKm;
+    }).toList();
+  }
+
+  double _distanceKm(ZuRanking r) {
+    if (_position == null || r.location == null) return 0;
+    return Geolocator.distanceBetween(
+      _position!.latitude, _position!.longitude,
+      r.location!.latitude, r.location!.longitude,
+    ) / 1000;
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final user = ref.watch(currentUserProvider).valueOrNull;
+
+    return Column(
+      children: [
+        // Toggle ville / géo
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+          child: Row(
+            children: [
+              _ModeChip(
+                label: '🏙 Ma ville',
+                selected: _mode == 'city',
+                onTap: () => setState(() => _mode = 'city'),
+              ),
+              const SizedBox(width: 8),
+              _ModeChip(
+                label: '📍 Autour de moi',
+                selected: _mode == 'geo',
+                onTap: _mode == 'geo'
+                    ? null
+                    : _loadingGeo
+                        ? null
+                        : _requestGeo,
+                loading: _loadingGeo,
+              ),
+            ],
+          ),
+        ),
+
+        // Sélecteur de rayon (visible uniquement en mode géo)
+        if (_mode == 'geo' && _position != null) ...[
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 36,
+            child: ListView(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              scrollDirection: Axis.horizontal,
+              children: _radii.map((r) {
+                final sel = r == _radiusKm;
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: GestureDetector(
+                    onTap: () => setState(() => _radiusKm = r),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      decoration: BoxDecoration(
+                        color: sel ? ZuTheme.accent : ZuTheme.surface,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: sel ? ZuTheme.accent : ZuTheme.borderColor),
+                      ),
+                      child: Center(
+                        child: Text(
+                          r < 100 ? '${r.round()} km' : '100 km',
+                          style: GoogleFonts.syne(fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: sel ? ZuTheme.bgPrimary : ZuTheme.textSecondary),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ],
+
+        const SizedBox(height: 8),
+
+        // Contenu
+        Expanded(child: _buildContent(context, user)),
+      ],
+    );
+  }
+
+  Widget _buildContent(BuildContext context, ZuUser? user) {
+    // Mode géo
+    if (_mode == 'geo') {
+      if (_geoError != null) return _GeoError(message: _geoError!, onRetry: _requestGeo);
+      if (_position == null) return _GeoPrompt(onTap: _requestGeo, loading: _loadingGeo);
+
+      final allAsync = ref.watch(allRankingsProvider);
+      return allAsync.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (e, _) => Center(child: Text('$e')),
+        data: (all) {
+          final nearby = _filterByDistance(all);
+          if (nearby.isEmpty) {
+            return _EmptyNearby(radiusKm: _radiusKm);
+          }
+          return ListView.builder(
+            padding: const EdgeInsets.only(bottom: 24),
+            itemCount: nearby.length,
+            itemBuilder: (ctx, i) {
+              final r = nearby[i];
+              return _RankingTile(
+                ranking: r,
+                position: i + 1,
+                onTap: () => ctx.push('/players/${r.uid}'),
+                distanceKm: _distanceKm(r),
+              );
+            },
+          );
+        },
+      );
+    }
+
+    // Mode ville
     if (user?.city == null) {
       return Center(
         child: Padding(
@@ -276,21 +443,18 @@ class _CityLeaderboardTab extends ConsumerWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.location_off_outlined, size: 48,
+              const Icon(Icons.location_city_outlined, size: 48,
                 color: ZuTheme.textSecondary),
               const SizedBox(height: 12),
               Text('Ville non renseignée',
-                style: GoogleFonts.syne(fontSize: 16, fontWeight: FontWeight.w700,
-                  color: ZuTheme.textPrimary)),
+                style: GoogleFonts.syne(fontSize: 16, fontWeight: FontWeight.w700)),
               const SizedBox(height: 8),
-              Text('Ajoute ta ville dans ton profil pour voir\nle classement de ta région.',
+              Text('Ajoute ta ville dans ton profil ou\nutilise la géolocalisation.',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodySmall),
               const SizedBox(height: 16),
-              ZuButton(
-                label: 'Modifier le profil',
-                onPressed: () => context.push('/profile/edit'),
-              ),
+              ZuButton(label: 'Modifier le profil',
+                onPressed: () => context.push('/profile/edit')),
             ],
           ),
         ),
@@ -299,7 +463,6 @@ class _CityLeaderboardTab extends ConsumerWidget {
 
     final filter = LeaderboardFilter('city', city: user!.city);
     final async  = ref.watch(leaderboardProvider(filter));
-
     return async.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => Center(child: Text('$e')),
@@ -325,11 +488,13 @@ class _RankingTile extends ConsumerWidget {
   final ZuRanking ranking;
   final int position;
   final VoidCallback onTap;
+  final double? distanceKm; // null = pas affiché
 
   const _RankingTile({
     required this.ranking,
     required this.position,
     required this.onTap,
+    this.distanceKm,
   });
 
   @override
@@ -405,6 +570,10 @@ class _RankingTile extends ConsumerWidget {
                         const SizedBox(width: 6),
                         _StreakBadge(streak: ranking.currentStreak),
                       ],
+                      if (distanceKm != null) ...[
+                        const SizedBox(width: 6),
+                        _DistanceBadge(km: distanceKm!),
+                      ],
                     ],
                   ),
                 ],
@@ -479,6 +648,149 @@ class _StreakBadge extends StatelessWidget {
     child: Text('🔥 $streak',
       style: const TextStyle(fontSize: 10, color: Colors.orange,
         fontWeight: FontWeight.w700)),
+  );
+}
+
+// ── Badge distance ────────────────────────────────────────────────
+
+class _DistanceBadge extends StatelessWidget {
+  final double km;
+  const _DistanceBadge({required this.km});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+    decoration: BoxDecoration(
+      color: Colors.blue.withOpacity(0.12),
+      borderRadius: BorderRadius.circular(6),
+    ),
+    child: Text(
+      km < 1 ? '<1 km' : '${km.round()} km',
+      style: const TextStyle(fontSize: 10, color: Colors.blue,
+        fontWeight: FontWeight.w700),
+    ),
+  );
+}
+
+// ── Chip de mode (ville / géo) ────────────────────────────────────
+
+class _ModeChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback? onTap;
+  final bool loading;
+  const _ModeChip({required this.label, required this.selected,
+    this.onTap, this.loading = false});
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: onTap,
+    child: AnimatedContainer(
+      duration: const Duration(milliseconds: 150),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+        color: selected ? ZuTheme.accent : ZuTheme.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: selected ? ZuTheme.accent : ZuTheme.borderColor),
+      ),
+      child: loading
+          ? SizedBox(
+              width: 14, height: 14,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: selected ? ZuTheme.bgPrimary : ZuTheme.textSecondary,
+              ),
+            )
+          : Text(label,
+              style: GoogleFonts.syne(fontSize: 12, fontWeight: FontWeight.w700,
+                color: selected ? ZuTheme.bgPrimary : ZuTheme.textSecondary)),
+    ),
+  );
+}
+
+// ── Invite à activer la géolocalisation ───────────────────────────
+
+class _GeoPrompt extends StatelessWidget {
+  final VoidCallback onTap;
+  final bool loading;
+  const _GeoPrompt({required this.onTap, required this.loading});
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.my_location_rounded, size: 52,
+            color: ZuTheme.textSecondary),
+          const SizedBox(height: 16),
+          Text('Joueurs autour de toi',
+            style: GoogleFonts.syne(fontSize: 16, fontWeight: FontWeight.w800,
+              color: ZuTheme.textPrimary)),
+          const SizedBox(height: 8),
+          Text('Autorise la localisation pour voir\nles joueurs près de chez toi.',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 20),
+          ZuButton(
+            label: loading ? 'Localisation…' : 'Activer la localisation',
+            loading: loading,
+            onPressed: loading ? null : onTap,
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _GeoError extends StatelessWidget {
+  final String message;
+  final VoidCallback onRetry;
+  const _GeoError({required this.message, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.location_off_rounded, size: 48, color: Colors.red),
+          const SizedBox(height: 12),
+          Text(message, textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 16),
+          ZuButton(label: 'Réessayer', onPressed: onRetry),
+        ],
+      ),
+    ),
+  );
+}
+
+class _EmptyNearby extends StatelessWidget {
+  final double radiusKm;
+  const _EmptyNearby({required this.radiusKm});
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('🔍', style: TextStyle(fontSize: 44)),
+          const SizedBox(height: 12),
+          Text('Aucun joueur à ${radiusKm.round()} km',
+            style: GoogleFonts.syne(fontSize: 16, fontWeight: FontWeight.w700,
+              color: ZuTheme.textPrimary)),
+          const SizedBox(height: 8),
+          Text('Élargis le rayon ou invite des amis\nà rejoindre Zupadel !',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodySmall),
+        ],
+      ),
+    ),
   );
 }
 

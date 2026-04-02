@@ -1434,6 +1434,14 @@ class LeaderboardService {
     return doc.exists ? ZuRanking.fromFirestore(doc) : null;
   }
 
+  /// Tous les classements (pour filtre géographique côté client)
+  Stream<List<ZuRanking>> watchAllRankings({int limit = 300}) =>
+      _db.collection('rankings')
+          .orderBy('eloRating', descending: true)
+          .limit(limit)
+          .snapshots()
+          .map((s) => s.docs.map(ZuRanking.fromFirestore).toList());
+
   /// Stream du classement de l'utilisateur connecté
   Stream<ZuRanking?> watchMyRanking(String uid) =>
       _db.collection('rankings')
@@ -1470,6 +1478,9 @@ final leaderboardProvider = StreamProvider.family<List<ZuRanking>, LeaderboardFi
     };
   },
 );
+
+final allRankingsProvider = StreamProvider<List<ZuRanking>>((ref) =>
+    ref.watch(leaderboardServiceProvider).watchAllRankings());
 
 final myRankingProvider = StreamProvider<ZuRanking?>((ref) {
   final uid = ref.watch(authStateProvider).valueOrNull?.uid;

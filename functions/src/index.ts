@@ -846,6 +846,7 @@ export const updateStatsOnMatchFinish = onDocumentUpdated(
           level:         userData.level ?? 1,
           city:          userData.city ?? null,
           fftRank:       userData.fftRank ?? null,
+          location:      userData.lastKnownLocation ?? null,
           eloRating:     newEloV,
           rankingPoints: admin.firestore.FieldValue.increment(pts),
           weeklyPoints:  admin.firestore.FieldValue.increment(pts),

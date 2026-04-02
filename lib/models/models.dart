@@ -529,6 +529,7 @@ class ZuRanking {
   final int bestStreak;
   final int rankPosition;   // Position globale (mise à jour quotidiennement)
   final int weeklyPoints;
+  final GeoPoint? location; // Dernière position connue (pour filtre géographique)
   final DateTime updatedAt;
 
   const ZuRanking({
@@ -548,6 +549,7 @@ class ZuRanking {
     required this.bestStreak,
     required this.rankPosition,
     required this.weeklyPoints,
+    this.location,
     required this.updatedAt,
   });
 
@@ -577,6 +579,7 @@ class ZuRanking {
       bestStreak:    d['bestStreak'] ?? 0,
       rankPosition:  d['rankPosition'] ?? 9999,
       weeklyPoints:  d['weeklyPoints'] ?? 0,
+      location:      d['location'] as GeoPoint?,
       updatedAt:     (d['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
