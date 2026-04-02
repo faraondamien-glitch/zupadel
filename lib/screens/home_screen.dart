@@ -216,6 +216,25 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             sliver: SliverToBoxAdapter(child: _MyMatchesSection()),
           ),
 
+          // ── Section : Classement ─────────────────────────────
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+            sliver: SliverToBoxAdapter(
+              child: ZuSectionTitle(
+                'Classement',
+                action: TextButton(
+                  onPressed: () => context.go('/leaderboard'),
+                  child: Text('Voir tout', style: GoogleFonts.syne(fontSize: 12, color: ZuTheme.accent)),
+                ),
+              ),
+            ),
+          ),
+
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            sliver: SliverToBoxAdapter(child: _LeaderboardPreview()),
+          ),
+
           // ── Section : Tournois à venir ────────────────────────
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
@@ -223,7 +242,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               child: ZuSectionTitle(
                 'Tournois à venir',
                 action: TextButton(
-                  onPressed: () => context.go('/tournaments'),
+                  onPressed: () => context.push('/tournaments'),
                   child: Text('Voir tout', style: GoogleFonts.syne(fontSize: 12, color: ZuTheme.accent)),
                 ),
               ),
@@ -943,6 +962,91 @@ class _CostRow extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ── Aperçu classement (home screen) ──────────────────────────────
+
+class _LeaderboardPreview extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final topAsync = ref.watch(leaderboardProvider(const LeaderboardFilter('global')));
+    final myRank   = ref.watch(myRankingProvider).valueOrNull;
+
+    return topAsync.when(
+      loading: () => const ZuShimmerCard(height: 110),
+      error: (_, __) => const SizedBox.shrink(),
+      data: (list) {
+        if (list.isEmpty) return const SizedBox.shrink();
+        final top3 = list.take(3).toList();
+        return ZuCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ...top3.asMap().entries.map((e) {
+                final r   = e.value;
+                final pos = e.key + 1;
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: GestureDetector(
+                    onTap: () => context.push('/players/${r.uid}'),
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 28, height: 28,
+                          child: Center(child: Text(
+                            pos == 1 ? '🥇' : pos == 2 ? '🥈' : '🥉',
+                            style: const TextStyle(fontSize: 18),
+                          )),
+                        ),
+                        const SizedBox(width: 8),
+                        CircleAvatar(
+                          radius: 13,
+                          backgroundColor: ZuTheme.accent.withOpacity(0.15),
+                          backgroundImage: r.photoUrl != null
+                              ? NetworkImage(r.photoUrl!) : null,
+                          child: r.photoUrl == null
+                              ? Text(r.initials, style: GoogleFonts.syne(
+                                  fontSize: 9, fontWeight: FontWeight.w700,
+                                  color: ZuTheme.accent))
+                              : null,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(r.displayName,
+                            maxLines: 1, overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.syne(fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: ZuTheme.textPrimary)),
+                        ),
+                        Text('${r.eloRating} ELO',
+                          style: GoogleFonts.syne(fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: ZuTheme.textSecondary)),
+                      ],
+                    ),
+                  ),
+                );
+              }),
+              if (myRank != null && myRank.rankPosition > 3) ...[
+                const Divider(height: 16, thickness: 0.5),
+                Row(
+                  children: [
+                    Text('#${myRank.rankPosition}',
+                      style: GoogleFonts.syne(fontSize: 11, fontWeight: FontWeight.w800,
+                        color: ZuTheme.accent)),
+                    const SizedBox(width: 8),
+                    Text('Ta position · ${myRank.eloRating} ELO',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: ZuTheme.textSecondary, fontSize: 11)),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        );
+      },
     );
   }
 }

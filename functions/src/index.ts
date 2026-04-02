@@ -703,24 +703,222 @@ export const onTournamentStatusChanged = onDocumentUpdated(
   }
 );
 
+// ── Helpers ELO ──────────────────────────────────────────────────
+
+/**
+ * Calcule le nouvel ELO après un match.
+ * Pour un match en équipe, on passe l'ELO moyen de l'équipe adverse.
+ */
+function newElo(myElo: number, opponentAvgElo: number, won: boolean, k = 32): number {
+  const expected = 1 / (1 + Math.pow(10, (opponentAvgElo - myElo) / 400));
+  const actual   = won ? 1 : 0;
+  return Math.round(myElo + k * (actual - expected));
+}
+
+/**
+ * Parse un score "6-3 7-5" ou "6-3 / 7-5" → [[6,3],[7,5]]
+ */
+function parseSets(score: string): [number, number][] {
+  return score.split(/[\s/]+/).map((s) => {
+    const parts = s.split("-").map(Number);
+    return [parts[0] || 0, parts[1] || 0] as [number, number];
+  });
+}
+
+/**
+ * Compte les sets gagnés pour chaque équipe à partir des sets parsés.
+ * L'équipe 1 joue avec les scores à gauche (team1Score-team2Score).
+ */
+function countSetsWon(sets: [number, number][]): [number, number] {
+  let t1 = 0; let t2 = 0;
+  for (const [a, b] of sets) {
+    if (a > b) t1++; else if (b > a) t2++;
+  }
+  return [t1, t2];
+}
+
 export const updateStatsOnMatchFinish = onDocumentUpdated(
   {document: "matches/{matchId}", region: "europe-west3"},
   async (event) => {
-    const db = getDb();
+    const db     = getDb();
     const before = event.data?.before.data();
     const after  = event.data?.after.data();
     if (!before || !after) return;
     if (before.status === after.status) return;
     if (after.status !== "finished") return;
     if (!after.score) return;
-    const playerIds: string[] = after.playerIds || [];
-    for (const uid of playerIds) {
-      const statsRef = db.collection("userStats").doc(uid);
-      await statsRef.set({
-        matchesPlayed: admin.firestore.FieldValue.increment(1),
-        minutesPlayed: admin.firestore.FieldValue.increment(after.durationMinutes || 90),
-      }, {merge: true});
+
+    const matchType: string  = after.type || "leisure";
+    const duration: number   = after.durationMinutes || 90;
+    const winnerTeam: number = after.winnerTeam || 1;
+    const team1Ids: string[] = after.team1Ids || [];
+    const team2Ids: string[] = after.team2Ids || [];
+    const allIds             = [...team1Ids, ...team2Ids];
+    if (allIds.length === 0) return;
+
+    // Points selon le type de match
+    const winPoints  = matchType === "competitive" ? 10 : 5;
+    const lossPoints = 2;
+
+    // Parser le score
+    const sets          = parseSets(after.score as string);
+    const [t1Sets, t2Sets] = countSetsWon(sets);
+    const setsForTeam   = (teamIdx: 1 | 2) => teamIdx === 1 ? [t1Sets, t2Sets] : [t2Sets, t1Sets];
+
+    // Récupérer les ELO actuels de tous les joueurs
+    const statsSnaps = await Promise.all(allIds.map((uid) => db.collection("userStats").doc(uid).get()));
+    const eloMap: Record<string, number> = {};
+    for (const snap of statsSnaps) {
+      eloMap[snap.id] = (snap.data()?.eloRating as number | undefined) ?? 1200;
     }
+
+    const team1AvgElo = team1Ids.length
+      ? team1Ids.reduce((s, uid) => s + eloMap[uid], 0) / team1Ids.length
+      : 1200;
+    const team2AvgElo = team2Ids.length
+      ? team2Ids.reduce((s, uid) => s + eloMap[uid], 0) / team2Ids.length
+      : 1200;
+
+    // Récupérer les niveaux moyens des adversaires pour avgOpponentLevel
+    const userSnaps = await Promise.all(allIds.map((uid) => db.collection("users").doc(uid).get()));
+    const levelMap: Record<string, number> = {};
+    for (const snap of userSnaps) {
+      levelMap[snap.id] = (snap.data()?.level as number | undefined) ?? 1;
+    }
+    const team1AvgLevel = team1Ids.length
+      ? team1Ids.reduce((s, uid) => s + (levelMap[uid] || 1), 0) / team1Ids.length : 1;
+    const team2AvgLevel = team2Ids.length
+      ? team2Ids.reduce((s, uid) => s + (levelMap[uid] || 1), 0) / team2Ids.length : 1;
+
+    const batch = db.batch();
+
+    const processTeam = async (teamIds: string[], teamIdx: 1 | 2) => {
+      const won       = winnerTeam === teamIdx;
+      const oppAvgElo = teamIdx === 1 ? team2AvgElo : team1AvgElo;
+      const oppAvgLvl = teamIdx === 1 ? team2AvgLevel : team1AvgLevel;
+      const [mySets, oppSets] = setsForTeam(teamIdx);
+
+      for (const uid of teamIds) {
+        const myElo   = eloMap[uid] ?? 1200;
+        const newEloV = newElo(myElo, oppAvgElo, won);
+        const pts     = won ? winPoints : lossPoints;
+
+        // Calcul de la nouvelle moyenne de niveau adversaire (rolling average)
+        const curSnap  = statsSnaps.find((s) => s.id === uid);
+        const curData  = curSnap?.data() ?? {};
+        const curPlayed  = (curData.matchesPlayed as number | undefined) ?? 0;
+        const curAvgOpp  = (curData.avgOpponentLevel as number | undefined) ?? 0;
+        const newAvgOpp  = curPlayed === 0
+          ? oppAvgLvl
+          : (curAvgOpp * curPlayed + oppAvgLvl) / (curPlayed + 1);
+
+        const curStreak = (curData.currentStreak as number | undefined) ?? 0;
+        const curBest   = (curData.bestStreak as number | undefined) ?? 0;
+        const newStreak = won ? curStreak + 1 : 0;
+        const newBest   = Math.max(curBest, newStreak);
+
+        const statsRef = db.collection("userStats").doc(uid);
+        batch.set(statsRef, {
+          matchesPlayed:    admin.firestore.FieldValue.increment(1),
+          matchesWon:       admin.firestore.FieldValue.increment(won ? 1 : 0),
+          matchesLost:      admin.firestore.FieldValue.increment(won ? 0 : 1),
+          minutesPlayed:    admin.firestore.FieldValue.increment(duration),
+          setsWon:          admin.firestore.FieldValue.increment(mySets),
+          setsLost:         admin.firestore.FieldValue.increment(oppSets),
+          avgOpponentLevel: newAvgOpp,
+          eloRating:        newEloV,
+          rankingPoints:    admin.firestore.FieldValue.increment(pts),
+          weeklyPoints:     admin.firestore.FieldValue.increment(pts),
+          currentStreak:    newStreak,
+          bestStreak:       newBest,
+        }, {merge: true});
+
+        // Mise à jour du ranking public
+        const rankingRef = db.collection("rankings").doc(uid);
+        const userData   = userSnaps.find((s) => s.id === uid)?.data() ?? {};
+        const newPlayed  = curPlayed + 1;
+        const newWon     = ((curData.matchesWon as number | undefined) ?? 0) + (won ? 1 : 0);
+        batch.set(rankingRef, {
+          uid,
+          firstName:     userData.firstName ?? "",
+          lastName:      userData.lastName ?? "",
+          photoUrl:      userData.photoUrl ?? null,
+          level:         userData.level ?? 1,
+          city:          userData.city ?? null,
+          fftRank:       userData.fftRank ?? null,
+          eloRating:     newEloV,
+          rankingPoints: admin.firestore.FieldValue.increment(pts),
+          weeklyPoints:  admin.firestore.FieldValue.increment(pts),
+          matchesPlayed: newPlayed,
+          matchesWon:    newWon,
+          winRate:       newPlayed > 0 ? newWon / newPlayed : 0,
+          currentStreak: newStreak,
+          bestStreak:    newBest,
+          updatedAt:     admin.firestore.FieldValue.serverTimestamp(),
+        }, {merge: true});
+      }
+    };
+
+    await processTeam(team1Ids, 1);
+    await processTeam(team2Ids, 2);
+    await batch.commit();
+
+    console.log(`Stats + ELO mis à jour pour le match ${event.params.matchId}`);
+  }
+);
+
+// ── Calcul des positions dans le classement (quotidien) ──────────
+
+export const computeRankPositions = onSchedule(
+  {schedule: "30 6 * * *", timeZone: "Europe/Paris", region: "europe-west3"},
+  async () => {
+    const db   = getDb();
+    const snap = await db.collection("rankings").orderBy("eloRating", "desc").get();
+
+    const batchSize = 400;
+    let batch       = db.batch();
+    let count       = 0;
+
+    for (let i = 0; i < snap.docs.length; i++) {
+      batch.update(snap.docs[i].ref, {rankPosition: i + 1});
+      count++;
+      if (count >= batchSize) {
+        await batch.commit();
+        batch = db.batch();
+        count = 0;
+      }
+    }
+    if (count > 0) await batch.commit();
+
+    console.log(`Positions classement recalculées pour ${snap.size} joueurs`);
+  }
+);
+
+// ── Reset hebdomadaire des weeklyPoints (chaque lundi 00h01) ─────
+
+export const resetWeeklyPoints = onSchedule(
+  {schedule: "1 0 * * 1", timeZone: "Europe/Paris", region: "europe-west3"},
+  async () => {
+    const db   = getDb();
+    const snap = await db.collection("rankings").get();
+
+    const batchSize = 400;
+    let batch       = db.batch();
+    let count       = 0;
+
+    for (const doc of snap.docs) {
+      batch.update(doc.ref, {weeklyPoints: 0});
+      db.collection("userStats").doc(doc.id);
+      batch.update(db.collection("userStats").doc(doc.id), {weeklyPoints: 0});
+      count += 2;
+      if (count >= batchSize) {
+        await batch.commit();
+        batch = db.batch();
+        count = 0;
+      }
+    }
+    if (count > 0) await batch.commit();
+    console.log(`weeklyPoints remis à zéro pour ${snap.size} joueurs`);
   }
 );
 

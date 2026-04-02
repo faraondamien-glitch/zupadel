@@ -806,8 +806,9 @@ class ProfileScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final user  = ref.watch(currentUserProvider).valueOrNull;
-    final stats = ref.watch(userStatsProvider).valueOrNull;
+    final user    = ref.watch(currentUserProvider).valueOrNull;
+    final stats   = ref.watch(userStatsProvider).valueOrNull;
+    final ranking = ref.watch(myRankingProvider).valueOrNull;
 
     return Scaffold(
       backgroundColor: ZuTheme.bgPrimary,
@@ -879,6 +880,15 @@ class ProfileScreen extends ConsumerWidget {
               ),
             ),
           ),
+
+          // ELO + position
+          if (ranking != null && ranking.matchesPlayed > 0)
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+              sliver: SliverToBoxAdapter(
+                child: _EloRankCard(ranking: ranking),
+              ),
+            ),
 
           // Stats grid
           SliverPadding(
@@ -1000,6 +1010,77 @@ class ProfileScreen extends ConsumerWidget {
       subject: 'Code parrainage Zupadel',
     );
   }
+}
+
+// ── ELO + position card ─────────────────────────────────────────
+
+class _EloRankCard extends StatelessWidget {
+  final ZuRanking ranking;
+  const _EloRankCard({required this.ranking});
+
+  @override
+  Widget build(BuildContext context) => ZuCard(
+    child: Row(
+      children: [
+        Expanded(
+          child: _EloStat(
+            value: '${ranking.eloRating}',
+            label: 'ELO',
+            color: ZuTheme.accent,
+          ),
+        ),
+        Container(width: 1, height: 40, color: ZuTheme.borderColor),
+        Expanded(
+          child: _EloStat(
+            value: '#${ranking.rankPosition}',
+            label: 'Classement mondial',
+            color: ZuTheme.textPrimary,
+          ),
+        ),
+        Container(width: 1, height: 40, color: ZuTheme.borderColor),
+        Expanded(
+          child: _EloStat(
+            value: '${ranking.rankingPoints}',
+            label: 'Points ligue',
+            color: Colors.amber,
+          ),
+        ),
+        if (ranking.currentStreak >= 3) ...[
+          Container(width: 1, height: 40, color: ZuTheme.borderColor),
+          Expanded(
+            child: _EloStat(
+              value: '🔥 ${ranking.currentStreak}',
+              label: 'Série',
+              color: Colors.orange,
+              isEmoji: true,
+            ),
+          ),
+        ],
+      ],
+    ),
+  );
+}
+
+class _EloStat extends StatelessWidget {
+  final String value;
+  final String label;
+  final Color color;
+  final bool isEmoji;
+  const _EloStat({required this.value, required this.label,
+    required this.color, this.isEmoji = false});
+
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      Text(value, style: isEmoji
+          ? const TextStyle(fontSize: 18)
+          : GoogleFonts.syne(fontSize: 17, fontWeight: FontWeight.w800, color: color)),
+      const SizedBox(height: 2),
+      Text(label, textAlign: TextAlign.center,
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+          color: ZuTheme.textSecondary, fontSize: 10)),
+    ],
+  );
 }
 
 // ── Stats grid ──────────────────────────────────────────────────

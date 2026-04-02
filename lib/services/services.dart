@@ -371,7 +371,13 @@ class MatchService {
     final losers   = winnerTeam == 1 ? team2 : team1;
 
     final batch = _db.batch();
-    batch.update(matchRef, {'status': MatchStatus.finished.name, 'score': score});
+    batch.update(matchRef, {
+      'status':     MatchStatus.finished.name,
+      'score':      score,
+      'team1Ids':   team1,
+      'team2Ids':   team2,
+      'winnerTeam': winnerTeam,
+    });
 
     // Distribution des paris
     final winBettors  = winners.where((id) => match.bettorIds.contains(id)).toList();
@@ -1380,3 +1386,96 @@ final userStatsProvider = StreamProvider<UserStats?>((ref) {
       .snapshots()
       .map((d) => d.exists ? UserStats.fromFirestore(d.data()!) : null);
 });
+
+// ══════════════════════════════════════════════
+//  LEADERBOARD SERVICE
+// ══════════════════════════════════════════════
+
+class LeaderboardService {
+  final _db = FirebaseFirestore.instance;
+
+  /// Classement général — trié par ELO, limité à [limit] entrées
+  Stream<List<ZuRanking>> watchLeaderboard({int limit = 50}) =>
+      _db.collection('rankings')
+          .orderBy('eloRating', descending: true)
+          .limit(limit)
+          .snapshots()
+          .map((s) => s.docs.map(ZuRanking.fromFirestore).toList());
+
+  /// Classement filtré par niveau
+  Stream<List<ZuRanking>> watchLeaderboardByLevel(int level, {int limit = 50}) =>
+      _db.collection('rankings')
+          .where('level', isEqualTo: level)
+          .orderBy('eloRating', descending: true)
+          .limit(limit)
+          .snapshots()
+          .map((s) => s.docs.map(ZuRanking.fromFirestore).toList());
+
+  /// Classement filtré par ville
+  Stream<List<ZuRanking>> watchLeaderboardByCity(String city, {int limit = 50}) =>
+      _db.collection('rankings')
+          .where('city', isEqualTo: city)
+          .orderBy('eloRating', descending: true)
+          .limit(limit)
+          .snapshots()
+          .map((s) => s.docs.map(ZuRanking.fromFirestore).toList());
+
+  /// Top classement hebdomadaire
+  Stream<List<ZuRanking>> watchWeeklyLeaderboard({int limit = 50}) =>
+      _db.collection('rankings')
+          .orderBy('weeklyPoints', descending: true)
+          .limit(limit)
+          .snapshots()
+          .map((s) => s.docs.map(ZuRanking.fromFirestore).toList());
+
+  /// Classement d'un joueur spécifique (pour profil public)
+  Future<ZuRanking?> getPlayerRanking(String uid) async {
+    final doc = await _db.collection('rankings').doc(uid).get();
+    return doc.exists ? ZuRanking.fromFirestore(doc) : null;
+  }
+
+  /// Stream du classement de l'utilisateur connecté
+  Stream<ZuRanking?> watchMyRanking(String uid) =>
+      _db.collection('rankings')
+          .doc(uid)
+          .snapshots()
+          .map((d) => d.exists ? ZuRanking.fromFirestore(d) : null);
+}
+
+final leaderboardServiceProvider = Provider<LeaderboardService>((ref) => LeaderboardService());
+
+/// Filtre pour le classement
+class LeaderboardFilter {
+  final String type;  // 'global' | 'level' | 'city' | 'weekly'
+  final int? level;
+  final String? city;
+  const LeaderboardFilter(this.type, {this.level, this.city});
+
+  @override
+  bool operator ==(Object other) =>
+      other is LeaderboardFilter && other.type == type &&
+      other.level == level && other.city == city;
+  @override
+  int get hashCode => Object.hash(type, level, city);
+}
+
+final leaderboardProvider = StreamProvider.family<List<ZuRanking>, LeaderboardFilter>(
+  (ref, filter) {
+    final svc = ref.watch(leaderboardServiceProvider);
+    return switch (filter.type) {
+      'level'  => svc.watchLeaderboardByLevel(filter.level ?? 1),
+      'city'   => svc.watchLeaderboardByCity(filter.city ?? ''),
+      'weekly' => svc.watchWeeklyLeaderboard(),
+      _        => svc.watchLeaderboard(),
+    };
+  },
+);
+
+final myRankingProvider = StreamProvider<ZuRanking?>((ref) {
+  final uid = ref.watch(authStateProvider).valueOrNull?.uid;
+  if (uid == null) return Stream.value(null);
+  return ref.watch(leaderboardServiceProvider).watchMyRanking(uid);
+});
+
+final playerRankingProvider = FutureProvider.family<ZuRanking?, String>((ref, uid) =>
+    ref.watch(leaderboardServiceProvider).getPlayerRanking(uid));

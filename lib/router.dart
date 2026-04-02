@@ -10,6 +10,7 @@ import '../models/models.dart';
 import '../screens/home_screen.dart';
 import '../screens/match_screens.dart';
 import '../screens/messages_screen.dart';
+import '../screens/leaderboard_screen.dart';
 import '../screens/other_screens.dart';
 import '../services/services.dart';
 import '../theme/zu_theme.dart';
@@ -58,7 +59,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(path: '/matches', builder: (_, __) => const MatchListScreen()),
           GoRoute(path: '/messages', builder: (_, __) => const MessagesScreen()),
           GoRoute(path: '/clubs', builder: (_, __) => const ClubListScreen()),
-          GoRoute(path: '/tournaments', builder: (_, __) => const TournamentListScreen()),
+          GoRoute(path: '/leaderboard', builder: (_, __) => const LeaderboardScreen()),
           GoRoute(path: '/profile', builder: (_, __) => const ProfileScreen()),
           GoRoute(path: '/credits', builder: (_, __) => const CreditsScreen()),
         ],
@@ -116,8 +117,16 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, state) => PostMatchReviewScreen(matchId: state.pathParameters['id']!),
       ),
       GoRoute(
+        path: '/tournaments',
+        builder: (_, __) => const TournamentListScreen(),
+      ),
+      GoRoute(
         path: '/tournaments/:id',
         builder: (_, state) => TournamentDetailScreen(tournamentId: state.pathParameters['id']!),
+      ),
+      GoRoute(
+        path: '/players/:uid',
+        builder: (_, state) => PlayerProfileScreen(uid: state.pathParameters['uid']!),
       ),
       GoRoute(
         path: '/tournaments/:id/register',
@@ -158,7 +167,7 @@ class MainShell extends ConsumerWidget {
   final Widget child;
   const MainShell({super.key, required this.child});
 
-  static const _tabs = ['/', '/matches', '/messages', '/clubs', '/tournaments', '/profile'];
+  static const _tabs = ['/', '/matches', '/messages', '/clubs', '/leaderboard', '/profile'];
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -194,9 +203,9 @@ class MainShell extends ConsumerWidget {
                     )
                   : const Icon(Icons.chat_bubble_outline_rounded),
             ),
-            const BottomNavigationBarItem(icon: Icon(Icons.grid_view_rounded),     label: 'Terrains'),
-            const BottomNavigationBarItem(icon: Icon(Icons.emoji_events_rounded),  label: 'Tournois'),
-            const BottomNavigationBarItem(icon: Icon(Icons.person_rounded),        label: 'Profil'),
+            const BottomNavigationBarItem(icon: Icon(Icons.grid_view_rounded),         label: 'Terrains'),
+            const BottomNavigationBarItem(icon: Icon(Icons.leaderboard_rounded),      label: 'Classement'),
+            const BottomNavigationBarItem(icon: Icon(Icons.person_rounded),           label: 'Profil'),
           ],
         ),
       ),
