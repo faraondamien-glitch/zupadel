@@ -1175,6 +1175,70 @@ async function verifyGooglePurchase(productId: string, purchaseToken: string): P
   }
 }
 
+// ══════════════════════════════════════════════
+//  SYNCHRONISATION CLASSEMENTS FFT
+// ══════════════════════════════════════════════
+
+/**
+ * Appelle l'API FFT pour récupérer le classement padel d'un licencié.
+ * L'endpoint exact peut évoluer si la FFT change son infrastructure.
+ */
+async function fetchFftRanking(licence: string): Promise<string | null> {
+  const url = `https://www.fft.fr/backend/api/classements/search?licence=${encodeURIComponent(licence)}`;
+  const res = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "Zupadel/1.0 (contact@zupadel.fr)",
+    },
+  });
+  if (!res.ok) return null;
+  const data = await res.json() as Record<string, unknown>;
+  // Essayer les clés connues selon la structure de réponse FFT
+  const rank = data?.classementPadel ?? data?.classementSimple ?? data?.classement ?? data?.ranking;
+  return rank != null ? String(rank) : null;
+}
+
+/**
+ * Tâche planifiée : met à jour le classement FFT de tous les joueurs
+ * ayant une licence FFT enregistrée. S'exécute chaque jour à 6h (Paris).
+ */
+export const syncFftRankings = onSchedule(
+  {schedule: "0 6 * * *", timeZone: "Europe/Paris", region: "europe-west3"},
+  async () => {
+    const db = getDb();
+    const snap = await db.collection("users")
+      .where("fftLicense", "!=", null)
+      .get();
+
+    let updated = 0;
+    let failed  = 0;
+
+    for (const docSnap of snap.docs) {
+      const licence = docSnap.data().fftLicense as string | undefined;
+      if (!licence) continue;
+
+      // Pause 300ms entre chaque appel pour ne pas surcharger l'API FFT
+      await new Promise((r) => setTimeout(r, 300));
+
+      try {
+        const rank = await fetchFftRanking(licence);
+        if (rank) {
+          await docSnap.ref.update({
+            fftRank: rank,
+            fftRankUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          updated++;
+        }
+      } catch (e) {
+        console.warn(`FFT sync échoué pour ${docSnap.id} (licence ${licence}):`, e);
+        failed++;
+      }
+    }
+
+    console.log(`FFT rankings sync terminé : ${updated} mis à jour, ${failed} erreurs, ${snap.size} total`);
+  }
+);
+
 async function sendNotification(
   uid: string,
   payload: {title: string; body: string; data?: Record<string, string>}

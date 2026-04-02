@@ -23,7 +23,8 @@ class ZuUser {
   final String? photoUrl;
   final int level;           // 1–7
   final String? fftLicense;
-  final String? fftRank;     // P25, P100, P250...
+  final String? fftRank;            // P25, P100, P250... (auto-synced from FFT)
+  final DateTime? fftRankUpdatedAt; // Date de dernière synchronisation FFT
   final GeoPoint? location;
   final GeoPoint? lastKnownLocation;
   final String? city;
@@ -41,6 +42,7 @@ class ZuUser {
     required this.level,
     this.fftLicense,
     this.fftRank,
+    this.fftRankUpdatedAt,
     this.location,
     this.lastKnownLocation,
     this.city,
@@ -74,6 +76,7 @@ class ZuUser {
       level:               d['level'] ?? 1,
       fftLicense:          d['fftLicense'],
       fftRank:             d['fftRank'],
+      fftRankUpdatedAt:    (d['fftRankUpdatedAt'] as Timestamp?)?.toDate(),
       location:            d['location'] as GeoPoint?,
       lastKnownLocation:   d['lastKnownLocation'] as GeoPoint?,
       city:                d['city'],
@@ -92,6 +95,7 @@ class ZuUser {
     'level':               level,
     'fftLicense':          fftLicense,
     'fftRank':             fftRank,
+    // fftRankUpdatedAt est écrit par la Cloud Function uniquement
     'location':            location,
     'lastKnownLocation':   lastKnownLocation,
     'city':                city,
@@ -107,6 +111,7 @@ class ZuUser {
     level: level ?? this.level,
     fftLicense: fftLicense ?? this.fftLicense,
     fftRank: fftRank ?? this.fftRank,
+    fftRankUpdatedAt: fftRankUpdatedAt,
     location: location,
     lastKnownLocation: lastKnownLocation ?? this.lastKnownLocation,
     city: city,

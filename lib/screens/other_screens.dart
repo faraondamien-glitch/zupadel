@@ -471,7 +471,6 @@ class _ProfileEditScreenState extends ConsumerState<ProfileEditScreen> {
   final _lastNameCtrl   = TextEditingController();
   final _cityCtrl       = TextEditingController();
   final _fftLicenseCtrl = TextEditingController();
-  final _fftRankCtrl    = TextEditingController();
   int   _level          = 1;
   bool  _loading        = false;
   bool  _photoLoading   = false;
@@ -483,7 +482,6 @@ class _ProfileEditScreenState extends ConsumerState<ProfileEditScreen> {
     _lastNameCtrl.dispose();
     _cityCtrl.dispose();
     _fftLicenseCtrl.dispose();
-    _fftRankCtrl.dispose();
     super.dispose();
   }
 
@@ -493,7 +491,6 @@ class _ProfileEditScreenState extends ConsumerState<ProfileEditScreen> {
     _lastNameCtrl.text   = user.lastName;
     _cityCtrl.text       = user.city ?? '';
     _fftLicenseCtrl.text = user.fftLicense ?? '';
-    _fftRankCtrl.text    = user.fftRank ?? '';
     _level               = user.level;
     _initialized         = true;
   }
@@ -527,7 +524,6 @@ class _ProfileEditScreenState extends ConsumerState<ProfileEditScreen> {
         level:      _level,
         city:       _cityCtrl.text.trim().isEmpty ? null : _cityCtrl.text.trim(),
         fftLicense: _fftLicenseCtrl.text.trim().isEmpty ? null : _fftLicenseCtrl.text.trim(),
-        fftRank:    _fftRankCtrl.text.trim().isEmpty ? null : _fftRankCtrl.text.trim(),
       );
       if (mounted) {
         context.pop();
@@ -674,14 +670,8 @@ class _ProfileEditScreenState extends ConsumerState<ProfileEditScreen> {
               ),
               const SizedBox(height: 14),
 
-              // Classement FFT
-              TextFormField(
-                controller: _fftRankCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Classement FFT (ex: P25, P100…)',
-                  prefixIcon: Icon(Icons.emoji_events_outlined),
-                ),
-              ),
+              // Classement FFT — lecture seule, synchronisé automatiquement
+              _FftRankTile(user: user),
               const SizedBox(height: 28),
 
               ZuButton(
@@ -1531,6 +1521,55 @@ class _Chip extends StatelessWidget {
       ),
     ),
   );
+}
+
+class _FftRankTile extends StatelessWidget {
+  final ZuUser user;
+  const _FftRankTile({required this.user});
+
+  @override
+  Widget build(BuildContext context) {
+    final rank = user.fftRank;
+    final updatedAt = user.fftRankUpdatedAt;
+    final syncLabel = updatedAt != null
+        ? 'Mis à jour le ${updatedAt.day.toString().padLeft(2, '0')}/${updatedAt.month.toString().padLeft(2, '0')}/${updatedAt.year}'
+        : 'Synchronisation auto chaque jour';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      decoration: BoxDecoration(
+        color: ZuTheme.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: ZuTheme.borderColor),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.emoji_events_outlined, size: 20, color: ZuTheme.textSecondary),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Classement FFT',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: ZuTheme.textSecondary)),
+                const SizedBox(height: 2),
+                Text(rank ?? 'Non renseigné',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: rank != null ? ZuTheme.textPrimary : ZuTheme.textSecondary)),
+                const SizedBox(height: 2),
+                Text(syncLabel,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: ZuTheme.accent, fontSize: 11)),
+              ],
+            ),
+          ),
+          if (rank != null)
+            ZuTag(rank, style: ZuTagStyle.green),
+        ],
+      ),
+    );
+  }
 }
 
 class _FormField extends StatelessWidget {
