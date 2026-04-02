@@ -102,5 +102,37 @@ service cloud.firestore {
       // Créées uniquement via Cloud Function (invitePlayerToMatch)
       allow write: if false;
     }
+
+    // ── Conversations & Messages ──────────────────────────────
+    function isParticipant(data) {
+      return isAuth() && request.auth.uid in data.participantIds;
+    }
+
+    match /conversations/{convId} {
+      allow read:   if isParticipant(resource.data);
+      allow create: if isAuth() &&
+                       request.auth.uid in request.resource.data.participantIds &&
+                       request.resource.data.participantIds.size() >= 2;
+      allow update: if isParticipant(resource.data);
+      allow delete: if false;
+
+      match /messages/{msgId} {
+        allow read: if isParticipant(
+          get(/databases/$(database)/documents/conversations/$(convId)).data
+        );
+        allow create: if isAuth() &&
+          request.auth.uid in
+            get(/databases/$(database)/documents/conversations/$(convId)).data.participantIds &&
+          request.auth.uid == request.resource.data.senderId;
+        allow update, delete: if false;
+      }
+    }
+
+    // ── Candidatures clubs (site web public) ─────────────────
+    match /clubApplications/{appId} {
+      allow read:          if false; // Admins uniquement
+      allow create:        if true;  // Formulaire public
+      allow update, delete: if false;
+    }
   }
 }

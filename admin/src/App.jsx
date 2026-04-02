@@ -106,12 +106,14 @@ function STitle({ children }) {
 //  DASHBOARD
 // ══════════════════════════════════════════════
 function Dashboard() {
-  const [stats, setStats] = useState({ users: 0, matches: 0, tournaments: 0, pendingTournaments: 0, pendingRegistrations: 0 });
+  const [stats, setStats] = useState({ users: 0, matches: 0, clubs: 0, pendingClubs: 0, pendingTournaments: 0, pendingRegistrations: 0 });
 
   useEffect(() => {
     const unsubs = [];
     unsubs.push(onSnapshot(collection(db, "users"), s => setStats(p => ({ ...p, users: s.size }))));
     unsubs.push(onSnapshot(collection(db, "matches"), s => setStats(p => ({ ...p, matches: s.size }))));
+    unsubs.push(onSnapshot(query(collection(db, "clubs"), where("isActive", "==", true)), s => setStats(p => ({ ...p, clubs: s.size }))));
+    unsubs.push(onSnapshot(query(collection(db, "clubApplications"), where("status", "==", "pending")), s => setStats(p => ({ ...p, pendingClubs: s.size }))));
     unsubs.push(onSnapshot(query(collection(db, "tournaments"), where("status", "==", "pending")), s => setStats(p => ({ ...p, pendingTournaments: s.size }))));
     unsubs.push(onSnapshot(query(collection(db, "tournamentRegistrations"), where("status", "==", "pending")), s => setStats(p => ({ ...p, pendingRegistrations: s.size }))));
     return () => unsubs.forEach(u => u());
@@ -126,6 +128,7 @@ function Dashboard() {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 24 }}>
         <Metric label="Utilisateurs" value={stats.users.toLocaleString()} />
         <Metric label="Matchs total" value={stats.matches.toLocaleString()} />
+        <Metric label="Clubs actifs" value={stats.clubs} sub={stats.pendingClubs > 0 ? `${stats.pendingClubs} en attente` : undefined} color={stats.pendingClubs > 0 ? C.gold : C.text} />
         <Metric label="Tournois en attente" value={stats.pendingTournaments} color={stats.pendingTournaments > 0 ? C.gold : C.text} />
         <Metric label="Inscriptions en attente" value={stats.pendingRegistrations} color={stats.pendingRegistrations > 0 ? C.gold : C.text} />
       </div>
@@ -534,6 +537,333 @@ function Concours() {
   );
 }
 
+// ══════════════════════════════════════════════
+//  CLUBS
+// ══════════════════════════════════════════════
+const DAYS = [
+  { key: "monday",    label: "Lundi" },
+  { key: "tuesday",   label: "Mardi" },
+  { key: "wednesday", label: "Mercredi" },
+  { key: "thursday",  label: "Jeudi" },
+  { key: "friday",    label: "Vendredi" },
+  { key: "saturday",  label: "Samedi" },
+  { key: "sunday",    label: "Dimanche" },
+];
+
+function Clubs() {
+  const [tab, setTab] = useState("applications");
+  const [apps, setApps] = useState([]);
+  const [clubs, setClubs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(null); // clubId en cours d'édition créneaux
+  const [slots, setSlots] = useState({}); // { clubId: { monday: "08:00-22:00", ... slotDuration: 90, priceCredits: 5 } }
+  const [saving, setSaving] = useState(null);
+
+  useEffect(() => {
+    const u1 = onSnapshot(
+      query(collection(db, "clubApplications"), orderBy("createdAt", "desc")),
+      s => { setApps(s.docs.map(d => ({ id: d.id, ...d.data() }))); setLoading(false); }
+    );
+    const u2 = onSnapshot(
+      query(collection(db, "clubs"), orderBy("name")),
+      s => setClubs(s.docs.map(d => ({ id: d.id, ...d.data() })))
+    );
+    return () => { u1(); u2(); };
+  }, []);
+
+  // Accepter une candidature → crée un doc clubs/
+  const acceptApp = async (app) => {
+    await Promise.all([
+      updateDoc(doc(db, "clubApplications", app.id), { status: "accepted", acceptedAt: serverTimestamp() }),
+      // Crée le club dans la collection utilisée par l'app Flutter
+      addDoc(collection(db, "clubs"), {
+        name:                app.name,
+        address:             app.address || "",
+        city:                app.city || "",
+        location:            null,
+        phoneNumber:         app.phone || "",
+        website:             app.website || "",
+        amenities:           [],
+        isActive:            true,
+        pricePerSlotCredits: 5,
+        slotDurationMinutes: 90,
+        openingHours:        {},
+        applicationId:       app.id,
+        contactName:         app.contactName || "",
+        contactEmail:        app.contactEmail || "",
+        createdAt:           serverTimestamp(),
+      }),
+    ]);
+  };
+
+  const refuseApp = async (id) => {
+    await updateDoc(doc(db, "clubApplications", id), { status: "refused" });
+  };
+
+  const toggleActive = async (club) => {
+    await updateDoc(doc(db, "clubs", club.id), { isActive: !club.isActive });
+  };
+
+  // Ouvre le panneau de gestion des créneaux pour un club
+  const openSlots = (club) => {
+    setExpanded(club.id);
+    setSlots(prev => ({
+      ...prev,
+      [club.id]: {
+        slotDuration:  club.slotDurationMinutes || 90,
+        priceCredits:  club.pricePerSlotCredits || 5,
+        ...Object.fromEntries(DAYS.map(d => [d.key, club.openingHours?.[d.key] || ""])),
+      },
+    }));
+  };
+
+  const saveSlots = async (clubId) => {
+    setSaving(clubId);
+    const s = slots[clubId];
+    const openingHours = Object.fromEntries(
+      DAYS.map(d => [d.key, s[d.key] || ""]).filter(([, v]) => v.trim() !== "")
+    );
+    await updateDoc(doc(db, "clubs", clubId), {
+      openingHours,
+      slotDurationMinutes: parseInt(s.slotDuration),
+      pricePerSlotCredits: parseInt(s.priceCredits),
+    });
+    setSaving(null);
+    setExpanded(null);
+  };
+
+  const pendingCount = apps.filter(a => a.status === "pending").length;
+
+  if (loading) return <Loader />;
+
+  return (
+    <div>
+      <STitle>Clubs partenaires</STitle>
+
+      {/* Sous-onglets */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 24, marginTop: 8 }}>
+        {[
+          { id: "applications", label: "Demandes d'inscription", count: pendingCount },
+          { id: "active",       label: "Clubs actifs",            count: null },
+        ].map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)} style={{
+            padding: "8px 18px", borderRadius: 20, fontSize: 13, fontFamily: font.syne, fontWeight: 600,
+            cursor: "pointer", border: `1px solid ${tab === t.id ? C.accent : C.border}`,
+            background: tab === t.id ? "rgba(200,240,74,0.1)" : C.card,
+            color: tab === t.id ? C.accent : C.muted,
+            display: "flex", alignItems: "center", gap: 8,
+          }}>
+            {t.label}
+            {t.count > 0 && (
+              <span style={{ background: "rgba(245,200,66,0.2)", color: C.gold, borderRadius: 10, padding: "1px 7px", fontSize: 10, fontWeight: 700 }}>
+                {t.count}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Onglet Demandes ── */}
+      {tab === "applications" && (
+        <div>
+          <div style={{ fontSize: 13, color: C.muted, fontFamily: font.dm, marginBottom: 16 }}>
+            Les clubs qui s'inscrivent via <strong style={{ color: C.text }}>zupadel.fr/clubs/rejoindre</strong> apparaissent ici.
+            L'acceptation crée automatiquement le club dans l'app et lui permet de configurer ses créneaux.
+          </div>
+
+          {apps.length === 0 && <Empty text="Aucune candidature reçue pour l'instant" />}
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {apps.map(app => (
+              <div key={app.id} style={{
+                background: C.card,
+                border: `1px solid ${app.status === "pending" ? C.gold : C.border}`,
+                borderRadius: 12, padding: 20,
+              }}>
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+                  <div style={{ flex: 1, minWidth: 240 }}>
+                    {/* Nom + badge */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                      <div style={{ width: 40, height: 40, borderRadius: 10, background: "rgba(200,240,74,0.1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>
+                        🏟️
+                      </div>
+                      <div>
+                        <div style={{ fontFamily: font.syne, fontWeight: 700, fontSize: 16, color: C.text }}>{app.name}</div>
+                        <div style={{ fontSize: 12, color: C.muted, fontFamily: font.dm }}>{app.address}{app.city ? ` · ${app.city}` : ""}</div>
+                      </div>
+                      <Badge status={app.status || "pending"} />
+                    </div>
+
+                    {/* Infos contact */}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "6px 20px", fontSize: 12, fontFamily: font.dm, color: C.muted }}>
+                      {app.contactName  && <span>👤 {app.contactName}</span>}
+                      {app.contactEmail && <span>✉️ {app.contactEmail}</span>}
+                      {app.phone        && <span>📞 {app.phone}</span>}
+                      {app.website      && <span>🌐 {app.website}</span>}
+                      {app.courts       && <span>🎾 {app.courts} terrain{app.courts > 1 ? "s" : ""}</span>}
+                      {app.createdAt    && <span>📅 {app.createdAt?.toDate?.()?.toLocaleDateString("fr-FR") || "—"}</span>}
+                    </div>
+
+                    {/* Message de candidature */}
+                    {app.message && (
+                      <div style={{ marginTop: 10, padding: "10px 14px", background: C.surface, borderRadius: 8, fontSize: 12, color: C.muted, fontFamily: font.dm, fontStyle: "italic", lineHeight: 1.5 }}>
+                        "{app.message}"
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Actions */}
+                  {app.status === "pending" && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8, flexShrink: 0 }}>
+                      <Btn label="✓ Accepter" onClick={() => acceptApp(app)} variant="success" />
+                      <Btn label="✕ Refuser"  onClick={() => refuseApp(app.id)} variant="danger" />
+                    </div>
+                  )}
+                  {app.status === "accepted" && (
+                    <div style={{ fontSize: 12, color: C.accent, fontFamily: font.dm, alignSelf: "center" }}>
+                      ✓ Club créé dans l'app
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Onglet Clubs actifs ── */}
+      {tab === "active" && (
+        <div>
+          <div style={{ fontSize: 13, color: C.muted, fontFamily: font.dm, marginBottom: 16 }}>
+            {clubs.length} club{clubs.length !== 1 ? "s" : ""} enregistré{clubs.length !== 1 ? "s" : ""}.
+            Configure les créneaux disponibles pour la réservation depuis l'app Zupadel.
+          </div>
+
+          {clubs.length === 0 && <Empty text="Aucun club actif. Accepte d'abord une candidature." />}
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {clubs.map(club => (
+              <div key={club.id} style={{ background: C.card, border: `1px solid ${club.isActive ? C.border : C.red}`, borderRadius: 12, overflow: "hidden" }}>
+                {/* Header club */}
+                <div style={{ display: "flex", alignItems: "center", gap: 14, padding: 16 }}>
+                  <div style={{ width: 40, height: 40, borderRadius: 10, background: "rgba(200,240,74,0.1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>
+                    🏟️
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontFamily: font.syne, fontWeight: 700, color: C.text }}>{club.name}</div>
+                    <div style={{ fontSize: 12, color: C.muted, fontFamily: font.dm, marginTop: 2, display: "flex", gap: 12, flexWrap: "wrap" }}>
+                      <span>📍 {club.city || club.address || "—"}</span>
+                      <span>⏱ Créneaux {club.slotDurationMinutes || 90} min</span>
+                      <span>⬡ {club.pricePerSlotCredits || 5} crédits/créneau</span>
+                      <span>{Object.keys(club.openingHours || {}).length} jour{Object.keys(club.openingHours || {}).length !== 1 ? "s" : ""} configuré{Object.keys(club.openingHours || {}).length !== 1 ? "s" : ""}</span>
+                    </div>
+                  </div>
+                  <Badge status={club.isActive ? "active" : "refused"} />
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <Btn
+                      label={expanded === club.id ? "Fermer" : "⚙ Créneaux"}
+                      onClick={() => expanded === club.id ? setExpanded(null) : openSlots(club)}
+                      variant="default"
+                      small
+                    />
+                    <Btn
+                      label={club.isActive ? "Désactiver" : "Réactiver"}
+                      onClick={() => toggleActive(club)}
+                      variant={club.isActive ? "danger" : "success"}
+                      small
+                    />
+                  </div>
+                </div>
+
+                {/* Panneau gestion des créneaux */}
+                {expanded === club.id && slots[club.id] && (
+                  <div style={{ borderTop: `1px solid ${C.border}`, padding: 20, background: C.surface }}>
+                    <div style={{ fontFamily: font.syne, fontWeight: 700, color: C.text, marginBottom: 16, fontSize: 14 }}>
+                      Configurer les créneaux disponibles
+                    </div>
+
+                    {/* Durée et prix */}
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
+                      <div>
+                        <label style={labelStyle}>Durée d'un créneau (min)</label>
+                        <select
+                          value={slots[club.id].slotDuration}
+                          onChange={e => setSlots(p => ({ ...p, [club.id]: { ...p[club.id], slotDuration: e.target.value } }))}
+                          style={inputStyle}
+                        >
+                          <option value="60">60 min</option>
+                          <option value="90">90 min</option>
+                          <option value="120">120 min</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Prix par créneau (crédits)</label>
+                        <input
+                          type="number" min="1" max="50"
+                          value={slots[club.id].priceCredits}
+                          onChange={e => setSlots(p => ({ ...p, [club.id]: { ...p[club.id], priceCredits: e.target.value } }))}
+                          style={inputStyle}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Horaires par jour */}
+                    <div style={{ fontFamily: font.dm, fontSize: 12, color: C.muted, marginBottom: 10 }}>
+                      Horaires d'ouverture — format <code style={{ background: C.card, padding: "1px 6px", borderRadius: 4, color: C.accent }}>HH:MM-HH:MM</code> · Laisser vide = fermé ce jour-là
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 10, marginBottom: 20 }}>
+                      {DAYS.map(day => (
+                        <div key={day.key}>
+                          <label style={labelStyle}>{day.label}</label>
+                          <input
+                            placeholder="ex: 09:00-22:00"
+                            value={slots[club.id][day.key] || ""}
+                            onChange={e => setSlots(p => ({ ...p, [club.id]: { ...p[club.id], [day.key]: e.target.value } }))}
+                            style={{
+                              ...inputStyle,
+                              borderColor: slots[club.id][day.key] ? C.accent : C.border,
+                            }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Aperçu nb créneaux */}
+                    <div style={{ background: C.card, borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 12, fontFamily: font.dm, color: C.muted }}>
+                      {DAYS.filter(d => slots[club.id][d.key]).map(d => {
+                        const val = slots[club.id][d.key];
+                        const duration = parseInt(slots[club.id].slotDuration) || 90;
+                        const match = val.match(/^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/);
+                        if (!match) return <span key={d.key} style={{ color: C.red, marginRight: 12 }}>{d.label}: format invalide</span>;
+                        const openMin  = parseInt(match[1]) * 60 + parseInt(match[2]);
+                        const closeMin = parseInt(match[3]) * 60 + parseInt(match[4]);
+                        const n = Math.floor((closeMin - openMin) / duration);
+                        return n > 0
+                          ? <span key={d.key} style={{ marginRight: 16 }}><span style={{ color: C.accent, fontWeight: 600 }}>{d.label.slice(0, 3)}</span> {n} créneau{n > 1 ? "x" : ""}</span>
+                          : <span key={d.key} style={{ color: C.red, marginRight: 12 }}>{d.label}: 0 créneau</span>;
+                      })}
+                      {!DAYS.some(d => slots[club.id][d.key]) && "Aucun jour configuré"}
+                    </div>
+
+                    <div style={{ display: "flex", gap: 10 }}>
+                      <Btn
+                        label={saving === club.id ? "Enregistrement..." : "✓ Enregistrer les créneaux"}
+                        onClick={() => saveSlots(club.id)}
+                        variant="primary"
+                      />
+                      <Btn label="Annuler" onClick={() => setExpanded(null)} />
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Helpers ─────────────────────────────────
 function Loader() {
   return <div style={{ padding: 40, textAlign: "center", color: C.muted, fontFamily: font.dm }}>Chargement...</div>;
@@ -570,6 +900,7 @@ const labelStyle = {
 const NAV = [
   { id: "dashboard",     label: "Dashboard",    icon: "◈" },
   { id: "users",         label: "Utilisateurs", icon: "◉" },
+  { id: "clubs",         label: "Clubs",        icon: "🏟" },
   { id: "tournaments",   label: "Tournois",     icon: "◆" },
   { id: "registrations", label: "Inscriptions", icon: "◇" },
   { id: "coaches",       label: "Coachs",       icon: "◎" },
@@ -591,13 +922,14 @@ export default function App() {
     unsubs.push(onSnapshot(query(collection(db, "tournaments"), where("status", "==", "pending")), s => setCounts(p => ({ ...p, tournaments: s.size }))));
     unsubs.push(onSnapshot(query(collection(db, "tournamentRegistrations"), where("status", "==", "pending")), s => setCounts(p => ({ ...p, registrations: s.size }))));
     unsubs.push(onSnapshot(query(collection(db, "coaches"), where("isActive", "==", false)), s => setCounts(p => ({ ...p, coaches: s.size }))));
+    unsubs.push(onSnapshot(query(collection(db, "clubApplications"), where("status", "==", "pending")), s => setCounts(p => ({ ...p, clubs: s.size }))));
     return () => unsubs.forEach(u => u());
   }, [user]);
 
   if (user === undefined) return <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", color: C.accent, fontFamily: font.syne, fontSize: 20, fontWeight: 800 }}>ZUPADEL</div>;
   if (!user) return <Login />;
 
-  const SCREENS = { dashboard: Dashboard, users: Users, tournaments: Tournaments, registrations: Registrations, coaches: Coaches, concours: Concours };
+  const SCREENS = { dashboard: Dashboard, users: Users, clubs: Clubs, tournaments: Tournaments, registrations: Registrations, coaches: Coaches, concours: Concours };
   const Screen = SCREENS[section];
 
   return (
