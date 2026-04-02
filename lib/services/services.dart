@@ -305,6 +305,20 @@ class MatchService {
     _functions.httpsCallable('notifyPlayerAccepted')
         .call({'matchId': matchId, 'playerId': playerId})
         .catchError((e) => debugPrint('[FCM] notifyPlayerAccepted: $e'));
+
+    // Si le match est maintenant complet → crée/met à jour la conversation de groupe
+    final snap = await _db.collection('matches').doc(matchId).get();
+    final data = snap.data();
+    if (data == null) return;
+    final playerIds  = List<String>.from(data['playerIds'] ?? []);
+    final maxPlayers = data['maxPlayers'] as int? ?? 4;
+    if (playerIds.length >= maxPlayers) {
+      await MessagingService().createMatchConversation(
+        matchId:   matchId,
+        matchClub: data['club'] ?? 'Match',
+        playerIds: playerIds,
+      );
+    }
   }
 
   Future<void> refusePlayer({required String matchId, required String playerId}) async {
@@ -1190,6 +1204,167 @@ final playerMiniProvider = FutureProvider.family<PlayerMini?, String>((ref, uid)
     lastName:  d['lastName']  as String? ?? '',
     photoUrl:  d['photoUrl']  as String?,
   );
+});
+
+// ══════════════════════════════════════════════
+//  USER STATS
+// ══════════════════════════════════════════════
+
+// ══════════════════════════════════════════════
+//  MESSAGING SERVICE
+// ══════════════════════════════════════════════
+
+class MessagingService {
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+
+  // ── Conversations ────────────────────────────────────────────
+
+  Stream<List<ZuConversation>> watchConversations(String uid) {
+    return _db
+        .collection('conversations')
+        .where('participantIds', arrayContains: uid)
+        .orderBy('lastMessageAt', descending: true)
+        .snapshots()
+        .map((s) => s.docs.map(ZuConversation.fromFirestore).toList());
+  }
+
+  /// Retourne l'ID de la conversation DM existante entre [uid1] et [uid2],
+  /// ou en crée une nouvelle.
+  Future<String> getOrCreateDM(String uid1, String uid2) async {
+    // Cherche une conv directe existante entre ces deux users
+    final existing = await _db
+        .collection('conversations')
+        .where('type', isEqualTo: 'direct')
+        .where('participantIds', arrayContains: uid1)
+        .limit(20)
+        .get();
+
+    for (final doc in existing.docs) {
+      final ids = List<String>.from(doc.data()['participantIds'] ?? []);
+      if (ids.contains(uid2) && ids.length == 2) return doc.id;
+    }
+
+    // Crée la conversation
+    final ref = await _db.collection('conversations').add({
+      'type':            'direct',
+      'participantIds':  [uid1, uid2],
+      'lastMessage':     '',
+      'lastMessageAt':   FieldValue.serverTimestamp(),
+      'unreadCounts':    {uid1: 0, uid2: 0},
+      'createdAt':       FieldValue.serverTimestamp(),
+    });
+    return ref.id;
+  }
+
+  /// Crée (ou met à jour) la conversation de groupe d'un match.
+  Future<void> createMatchConversation({
+    required String matchId,
+    required String matchClub,
+    required List<String> playerIds,
+  }) async {
+    final existing = await _db
+        .collection('conversations')
+        .where('matchId', isEqualTo: matchId)
+        .limit(1)
+        .get();
+
+    final unreadCounts = {for (final uid in playerIds) uid: 0};
+
+    if (existing.docs.isNotEmpty) {
+      // Met à jour les participants si quelqu'un a été ajouté
+      await existing.docs.first.reference.update({
+        'participantIds': playerIds,
+        'unreadCounts':   unreadCounts,
+      });
+    } else {
+      await _db.collection('conversations').add({
+        'type':           'match',
+        'matchId':        matchId,
+        'matchClub':      matchClub,
+        'participantIds': playerIds,
+        'lastMessage':    '🎾 Le groupe est prêt !',
+        'lastMessageAt':  FieldValue.serverTimestamp(),
+        'unreadCounts':   unreadCounts,
+        'createdAt':      FieldValue.serverTimestamp(),
+      });
+    }
+  }
+
+  // ── Messages ─────────────────────────────────────────────────
+
+  Stream<List<ZuMessage>> watchMessages(String convId) {
+    return _db
+        .collection('conversations')
+        .doc(convId)
+        .collection('messages')
+        .orderBy('createdAt', descending: false)
+        .snapshots()
+        .map((s) => s.docs.map(ZuMessage.fromFirestore).toList());
+  }
+
+  Future<void> sendMessage({
+    required String convId,
+    required String senderId,
+    required String text,
+    required List<String> participantIds,
+  }) async {
+    final batch = _db.batch();
+
+    // Ajoute le message
+    final msgRef = _db
+        .collection('conversations')
+        .doc(convId)
+        .collection('messages')
+        .doc();
+    batch.set(msgRef, {
+      'senderId':  senderId,
+      'text':      text.trim(),
+      'type':      'text',
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+
+    // Met à jour la conversation — incrémente les unread des autres participants
+    final unreadUpdate = <String, dynamic>{
+      'lastMessage':    text.trim(),
+      'lastMessageAt':  FieldValue.serverTimestamp(),
+      'lastSenderId':   senderId,
+    };
+    for (final uid in participantIds) {
+      if (uid != senderId) {
+        unreadUpdate['unreadCounts.$uid'] = FieldValue.increment(1);
+      }
+    }
+    batch.update(_db.collection('conversations').doc(convId), unreadUpdate);
+
+    await batch.commit();
+  }
+
+  Future<void> markAsRead(String convId, String uid) async {
+    await _db.collection('conversations').doc(convId).update({
+      'unreadCounts.$uid': 0,
+    });
+  }
+}
+
+final messagingServiceProvider = Provider<MessagingService>(
+  (_) => MessagingService(),
+);
+
+final conversationsProvider = StreamProvider<List<ZuConversation>>((ref) {
+  final uid = ref.watch(authStateProvider).valueOrNull?.uid;
+  if (uid == null) return Stream.value([]);
+  return ref.watch(messagingServiceProvider).watchConversations(uid);
+});
+
+final messagesProvider = StreamProvider.family<List<ZuMessage>, String>((ref, convId) {
+  return ref.watch(messagingServiceProvider).watchMessages(convId);
+});
+
+final unreadTotalProvider = Provider<int>((ref) {
+  final uid   = ref.watch(authStateProvider).valueOrNull?.uid;
+  final convs = ref.watch(conversationsProvider).valueOrNull ?? [];
+  if (uid == null) return 0;
+  return convs.fold(0, (sum, c) => sum + c.unreadFor(uid));
 });
 
 // ══════════════════════════════════════════════

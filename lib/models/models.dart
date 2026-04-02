@@ -701,3 +701,82 @@ class ScoredMatch {
     required this.levelMatch,
   });
 }
+
+// ─── CONVERSATION ────────────────────────────────────────────────
+
+enum ConversationType { direct, match }
+
+class ZuConversation {
+  final String id;
+  final ConversationType type;
+  final List<String> participantIds;
+  final String? matchId;       // rempli si type == match
+  final String? matchClub;     // nom du club affiché en titre
+  final String lastMessage;
+  final DateTime lastMessageAt;
+  final String? lastSenderId;
+  final Map<String, int> unreadCounts; // { uid: nbNonLus }
+  final DateTime createdAt;
+
+  const ZuConversation({
+    required this.id,
+    required this.type,
+    required this.participantIds,
+    this.matchId,
+    this.matchClub,
+    required this.lastMessage,
+    required this.lastMessageAt,
+    this.lastSenderId,
+    required this.unreadCounts,
+    required this.createdAt,
+  });
+
+  int unreadFor(String uid) => unreadCounts[uid] ?? 0;
+
+  factory ZuConversation.fromFirestore(DocumentSnapshot doc) {
+    final d = doc.data() as Map<String, dynamic>;
+    return ZuConversation(
+      id:              doc.id,
+      type:            ConversationType.values.byName(d['type'] ?? 'direct'),
+      participantIds:  List<String>.from(d['participantIds'] ?? []),
+      matchId:         d['matchId'],
+      matchClub:       d['matchClub'],
+      lastMessage:     d['lastMessage'] ?? '',
+      lastMessageAt:   (d['lastMessageAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      lastSenderId:    d['lastSenderId'],
+      unreadCounts:    Map<String, int>.from(d['unreadCounts'] ?? {}),
+      createdAt:       (d['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+    );
+  }
+}
+
+// ─── MESSAGE ─────────────────────────────────────────────────────
+
+enum MessageType { text, system }
+
+class ZuMessage {
+  final String id;
+  final String senderId;
+  final String text;
+  final MessageType type;
+  final DateTime createdAt;
+
+  const ZuMessage({
+    required this.id,
+    required this.senderId,
+    required this.text,
+    required this.type,
+    required this.createdAt,
+  });
+
+  factory ZuMessage.fromFirestore(DocumentSnapshot doc) {
+    final d = doc.data() as Map<String, dynamic>;
+    return ZuMessage(
+      id:        doc.id,
+      senderId:  d['senderId'] ?? '',
+      text:      d['text'] ?? '',
+      type:      MessageType.values.byName(d['type'] ?? 'text'),
+      createdAt: (d['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+    );
+  }
+}

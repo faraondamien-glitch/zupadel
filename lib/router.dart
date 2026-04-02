@@ -9,6 +9,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../models/models.dart';
 import '../screens/home_screen.dart';
 import '../screens/match_screens.dart';
+import '../screens/messages_screen.dart';
 import '../screens/other_screens.dart';
 import '../services/services.dart';
 import '../theme/zu_theme.dart';
@@ -55,9 +56,9 @@ final routerProvider = Provider<GoRouter>((ref) {
         routes: [
           GoRoute(path: '/', builder: (_, __) => const HomeScreen()),
           GoRoute(path: '/matches', builder: (_, __) => const MatchListScreen()),
+          GoRoute(path: '/messages', builder: (_, __) => const MessagesScreen()),
           GoRoute(path: '/clubs', builder: (_, __) => const ClubListScreen()),
           GoRoute(path: '/tournaments', builder: (_, __) => const TournamentListScreen()),
-          GoRoute(path: '/coaching', builder: (_, __) => const CoachListScreen()),
           GoRoute(path: '/profile', builder: (_, __) => const ProfileScreen()),
           GoRoute(path: '/credits', builder: (_, __) => const CreditsScreen()),
         ],
@@ -101,6 +102,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/matches/:id',
         builder: (_, state) => MatchDetailScreen(matchId: state.pathParameters['id']!),
+      ),
+      GoRoute(
+        path: '/messages/:id',
+        builder: (_, state) => ConversationScreen(convId: state.pathParameters['id']!),
       ),
       GoRoute(
         path: '/matches/:id/finish',
@@ -149,17 +154,18 @@ final routerProvider = Provider<GoRouter>((ref) {
 //  MAIN SHELL (Bottom Nav)
 // ══════════════════════════════════════════════
 
-class MainShell extends StatelessWidget {
+class MainShell extends ConsumerWidget {
   final Widget child;
   const MainShell({super.key, required this.child});
 
-  static const _tabs = ['/', '/matches', '/clubs', '/tournaments', '/coaching', '/profile'];
+  static const _tabs = ['/', '/matches', '/messages', '/clubs', '/tournaments', '/profile'];
 
   @override
-  Widget build(BuildContext context) {
-    final location = GoRouterState.of(context).matchedLocation;
-    final idx = _tabs.indexWhere((t) => location == t || (t != '/' && location.startsWith(t)));
+  Widget build(BuildContext context, WidgetRef ref) {
+    final location   = GoRouterState.of(context).matchedLocation;
+    final idx        = _tabs.indexWhere((t) => location == t || (t != '/' && location.startsWith(t)));
     final currentIdx = idx < 0 ? 0 : idx;
+    final unread     = ref.watch(unreadTotalProvider);
 
     return Scaffold(
       body: child,
@@ -173,13 +179,24 @@ class MainShell extends StatelessWidget {
           backgroundColor: Colors.transparent,
           elevation: 0,
           onTap: (i) => context.go(_tabs[i]),
-          items: const [
-            BottomNavigationBarItem(icon: Icon(Icons.home_rounded),             label: 'Accueil'),
-            BottomNavigationBarItem(icon: Icon(Icons.sports_tennis_rounded),    label: 'Matchs'),
-            BottomNavigationBarItem(icon: Icon(Icons.grid_view_rounded),        label: 'Terrains'),
-            BottomNavigationBarItem(icon: Icon(Icons.emoji_events_rounded),     label: 'Tournois'),
-            BottomNavigationBarItem(icon: Icon(Icons.fitness_center_rounded),   label: 'Coaching'),
-            BottomNavigationBarItem(icon: Icon(Icons.person_rounded),           label: 'Profil'),
+          items: [
+            const BottomNavigationBarItem(icon: Icon(Icons.home_rounded),          label: 'Accueil'),
+            const BottomNavigationBarItem(icon: Icon(Icons.sports_tennis_rounded), label: 'Matchs'),
+            BottomNavigationBarItem(
+              label: 'Messages',
+              icon: unread > 0
+                  ? Badge(
+                      label: Text(unread > 9 ? '9+' : '$unread',
+                        style: GoogleFonts.syne(fontSize: 9, fontWeight: FontWeight.w800)),
+                      backgroundColor: ZuTheme.accent,
+                      textColor: ZuTheme.bgPrimary,
+                      child: const Icon(Icons.chat_bubble_outline_rounded),
+                    )
+                  : const Icon(Icons.chat_bubble_outline_rounded),
+            ),
+            const BottomNavigationBarItem(icon: Icon(Icons.grid_view_rounded),     label: 'Terrains'),
+            const BottomNavigationBarItem(icon: Icon(Icons.emoji_events_rounded),  label: 'Tournois'),
+            const BottomNavigationBarItem(icon: Icon(Icons.person_rounded),        label: 'Profil'),
           ],
         ),
       ),
