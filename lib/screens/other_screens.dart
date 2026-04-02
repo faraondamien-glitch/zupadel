@@ -1913,7 +1913,7 @@ class _StatsCard extends StatelessWidget {
                       Expanded(child: _StatTile(
                         icon: '📊',
                         value: stats?.avgOpponentLevel != null && stats!.avgOpponentLevel > 0
-                            ? stats.avgOpponentLevel.toStringAsFixed(1)
+                            ? stats!.avgOpponentLevel.toStringAsFixed(1)
                             : '—',
                         label: 'Niv. moyen adv.',
                       )),
@@ -2896,28 +2896,31 @@ class ClubDetailScreen extends ConsumerWidget {
       ('thursday', 'Jeudi'), ('friday', 'Vendredi'),
       ('saturday', 'Samedi'), ('sunday', 'Dimanche'),
     ];
-    return days.map(((key, label)) {
-      final h = hours[key];
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 90,
-              child: Text(label, style: Theme.of(context).textTheme.bodyMedium),
-            ),
-            Text(
-              h?.isNotEmpty == true ? h! : 'Fermé',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: h?.isNotEmpty == true
-                    ? ZuTheme.textPrimary
-                    : ZuTheme.textSecondary,
+    return [
+      for (final (key, label) in days)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 3),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 90,
+                child: Text(label, style: Theme.of(context).textTheme.bodyMedium),
               ),
-            ),
-          ],
+              Builder(builder: (context) {
+                final h = hours[key];
+                return Text(
+                  h?.isNotEmpty == true ? h! : 'Fermé',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: h?.isNotEmpty == true
+                        ? ZuTheme.textPrimary
+                        : ZuTheme.textSecondary,
+                  ),
+                );
+              }),
+            ],
+          ),
         ),
-      );
-    }).toList();
+    ];
   }
 }
 
@@ -3243,25 +3246,25 @@ class _BookSlotScreenState extends ConsumerState<BookSlotScreen> {
                 Text('Récapitulatif',
                     style: Theme.of(context).textTheme.headlineMedium),
                 const SizedBox(height: 16),
-                _InfoRow(icon: Icons.sports_tennis_rounded,
+                _IconInfoRow(icon: Icons.sports_tennis_rounded,
                     label: widget.club.name),
                 const SizedBox(height: 8),
-                _InfoRow(icon: Icons.grid_view_rounded,
+                _IconInfoRow(icon: Icons.grid_view_rounded,
                     label: widget.court.name),
                 const SizedBox(height: 8),
-                _InfoRow(
+                _IconInfoRow(
                   icon: Icons.calendar_today_rounded,
                   label: DateFormat('EEEE d MMMM yyyy', 'fr_FR').format(widget.slot),
                 ),
                 const SizedBox(height: 8),
-                _InfoRow(
+                _IconInfoRow(
                   icon: Icons.access_time_rounded,
                   label:
                     '${DateFormat('HH:mm').format(widget.slot)} → '
                     '${DateFormat('HH:mm').format(widget.slot.add(Duration(minutes: widget.club.slotDurationMinutes)))}',
                 ),
                 const SizedBox(height: 8),
-                _InfoRow(
+                _IconInfoRow(
                   icon: Icons.toll_rounded,
                   label: '${widget.club.pricePerSlotCredits} crédits',
                   accent: true,
@@ -3283,7 +3286,7 @@ class _BookSlotScreenState extends ConsumerState<BookSlotScreen> {
                       fontWeight: FontWeight.w700,
                       color: user.credits >= widget.club.pricePerSlotCredits
                           ? ZuTheme.accent
-                          : ZuTheme.error,
+                          : ZuTheme.accentRed,
                     ),
                   ),
                 ],
@@ -3301,11 +3304,11 @@ class _BookSlotScreenState extends ConsumerState<BookSlotScreen> {
   }
 }
 
-class _InfoRow extends StatelessWidget {
+class _IconInfoRow extends StatelessWidget {
   final IconData icon;
   final String label;
   final bool accent;
-  const _InfoRow({required this.icon, required this.label, this.accent = false});
+  const _IconInfoRow({required this.icon, required this.label, this.accent = false});
 
   @override
   Widget build(BuildContext context) => Row(
@@ -3380,16 +3383,16 @@ class ReservationConfirmScreen extends ConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _InfoRow(icon: Icons.sports_tennis_rounded, label: res.clubName),
+                    _IconInfoRow(icon: Icons.sports_tennis_rounded, label: res.clubName),
                     const SizedBox(height: 8),
-                    _InfoRow(icon: Icons.grid_view_rounded, label: res.courtName),
+                    _IconInfoRow(icon: Icons.grid_view_rounded, label: res.courtName),
                     const SizedBox(height: 8),
-                    _InfoRow(
+                    _IconInfoRow(
                       icon: Icons.calendar_today_rounded,
                       label: DateFormat('EEEE d MMMM yyyy', 'fr_FR').format(res.startTime),
                     ),
                     const SizedBox(height: 8),
-                    _InfoRow(
+                    _IconInfoRow(
                       icon: Icons.access_time_rounded,
                       label: '${DateFormat('HH:mm').format(res.startTime)} → '
                           '${DateFormat('HH:mm').format(res.endTime)}',
@@ -3417,5 +3420,4 @@ class ReservationConfirmScreen extends ConsumerWidget {
       ),
     );
   }
-}
 }
