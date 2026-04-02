@@ -43,6 +43,13 @@ class _LeaderboardScreenState extends ConsumerState<LeaderboardScreen>
     return Scaffold(
       appBar: AppBar(
         title: Text('Classement', style: GoogleFonts.syne(fontWeight: FontWeight.w800)),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.info_outline_rounded, size: 22),
+            tooltip: 'Comment ça marche ?',
+            onPressed: () => _showRankingInfo(context),
+          ),
+        ],
         bottom: TabBar(
           controller: _tab,
           isScrollable: true,
@@ -80,6 +87,17 @@ class _LeaderboardScreenState extends ConsumerState<LeaderboardScreen>
           ),
         ],
       ),
+    );
+  }
+
+  void _showRankingInfo(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: ZuTheme.bgSurface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => const _RankingInfoSheet(),
     );
   }
 }
@@ -461,6 +479,118 @@ class _StreakBadge extends StatelessWidget {
     child: Text('🔥 $streak',
       style: const TextStyle(fontSize: 10, color: Colors.orange,
         fontWeight: FontWeight.w700)),
+  );
+}
+
+// ── Fiche explicative du classement ──────────────────────────────
+
+class _RankingInfoSheet extends StatelessWidget {
+  const _RankingInfoSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(
+        20, 12, 20, MediaQuery.of(context).padding.bottom + 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Poignée
+          Center(
+            child: Container(
+              width: 36, height: 4,
+              margin: const EdgeInsets.only(bottom: 20),
+              decoration: BoxDecoration(
+                color: ZuTheme.borderColor,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+
+          Text('Comment fonctionne le classement ?',
+            style: GoogleFonts.syne(fontSize: 17, fontWeight: FontWeight.w800,
+              color: ZuTheme.textPrimary)),
+          const SizedBox(height: 20),
+
+          _InfoSection(
+            emoji: '⚡',
+            title: 'ELO — ta cote',
+            body: 'Chaque joueur commence à 1 200 points ELO. '
+                'Après chaque match tu gagnes ou perds des points selon '
+                'le niveau de tes adversaires : battre un joueur plus fort '
+                'rapporte plus, perdre contre plus faible coûte plus.',
+          ),
+          const SizedBox(height: 16),
+
+          _InfoSection(
+            emoji: '🏆',
+            title: 'Points ligue',
+            body: 'En plus de l\'ELO, tu accumules des points ligue :\n'
+                '• Victoire compétitive → +10 pts\n'
+                '• Victoire loisir / training → +5 pts\n'
+                '• Défaite (participation) → +2 pts\n\n'
+                'Ces points se remettent à zéro chaque lundi — '
+                'l\'onglet "Cette semaine" reflète ce classement hebdo.',
+          ),
+          const SizedBox(height: 16),
+
+          _InfoSection(
+            emoji: '🔥',
+            title: 'Série de victoires',
+            body: 'À partir de 3 victoires d\'affilée, '
+                'une flamme apparaît à côté de ton nom. '
+                'Ta meilleure série est conservée dans ton profil.',
+          ),
+          const SizedBox(height: 16),
+
+          _InfoSection(
+            emoji: '📍',
+            title: 'Position globale',
+            body: 'Les positions (#1, #2…) sont recalculées chaque nuit '
+                'selon l\'ELO de tous les joueurs. '
+                'L\'onglet "Ma ville" filtre uniquement les joueurs '
+                'qui ont renseigné la même ville que toi.',
+          ),
+          const SizedBox(height: 16),
+
+          _InfoSection(
+            emoji: '🎾',
+            title: 'Seuls les matchs avec score comptent',
+            body: 'Un match doit être terminé avec un score saisi '
+                'pour impacter le classement. '
+                'Les matchs loisir sans résultat ne changent pas l\'ELO.',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoSection extends StatelessWidget {
+  final String emoji;
+  final String title;
+  final String body;
+  const _InfoSection({required this.emoji, required this.title, required this.body});
+
+  @override
+  Widget build(BuildContext context) => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(emoji, style: const TextStyle(fontSize: 22)),
+      const SizedBox(width: 12),
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: GoogleFonts.syne(fontSize: 13,
+              fontWeight: FontWeight.w700, color: ZuTheme.textPrimary)),
+            const SizedBox(height: 4),
+            Text(body, style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: ZuTheme.textSecondary, height: 1.5)),
+          ],
+        ),
+      ),
+    ],
   );
 }
 

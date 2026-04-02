@@ -1018,10 +1018,38 @@ class _EloRankCard extends StatelessWidget {
   final ZuRanking ranking;
   const _EloRankCard({required this.ranking});
 
+  void _showInfo(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: ZuTheme.bgSurface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => const _RankingInfoSheetSimple(),
+    );
+  }
+
   @override
   Widget build(BuildContext context) => ZuCard(
-    child: Row(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text('Mon classement',
+              style: GoogleFonts.syne(fontSize: 13, fontWeight: FontWeight.w700,
+                color: ZuTheme.textPrimary)),
+            GestureDetector(
+              onTap: () => _showInfo(context),
+              child: const Icon(Icons.info_outline_rounded, size: 18,
+                color: ZuTheme.textSecondary),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
         Expanded(
           child: _EloStat(
             value: '${ranking.eloRating}',
@@ -1057,6 +1085,8 @@ class _EloRankCard extends StatelessWidget {
           ),
         ],
       ],
+        ),
+      ],
     ),
   );
 }
@@ -1079,6 +1109,83 @@ class _EloStat extends StatelessWidget {
       Text(label, textAlign: TextAlign.center,
         style: Theme.of(context).textTheme.bodySmall?.copyWith(
           color: ZuTheme.textSecondary, fontSize: 10)),
+    ],
+  );
+}
+
+// ── Fiche info classement (version compacte pour le profil) ─────
+
+class _RankingInfoSheetSimple extends StatelessWidget {
+  const _RankingInfoSheetSimple();
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(
+        20, 12, 20, MediaQuery.of(context).padding.bottom + 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 36, height: 4,
+              margin: const EdgeInsets.only(bottom: 20),
+              decoration: BoxDecoration(
+                color: ZuTheme.borderColor,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          Text('Comment est calculé ton classement ?',
+            style: GoogleFonts.syne(fontSize: 16, fontWeight: FontWeight.w800,
+              color: ZuTheme.textPrimary)),
+          const SizedBox(height: 16),
+          _InfoRow(emoji: '⚡', title: 'ELO',
+            body: 'Démarre à 1 200. Chaque victoire ou défaite '
+                'ajuste tes points selon le niveau de tes adversaires. '
+                'Battre plus fort = gagner plus.'),
+          const SizedBox(height: 12),
+          _InfoRow(emoji: '🏆', title: 'Points ligue',
+            body: 'Victoire compétitive +10 · Victoire loisir +5 · '
+                'Défaite +2. Remis à zéro chaque lundi.'),
+          const SizedBox(height: 12),
+          _InfoRow(emoji: '🔥', title: 'Série',
+            body: 'Nombre de victoires consécutives. '
+                'La flamme apparaît à partir de 3 d\'affilée.'),
+          const SizedBox(height: 12),
+          _InfoRow(emoji: '🎾', title: 'Important',
+            body: 'Seuls les matchs avec un score saisi comptent '
+                'pour l\'ELO et les points.'),
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoRow extends StatelessWidget {
+  final String emoji;
+  final String title;
+  final String body;
+  const _InfoRow({required this.emoji, required this.title, required this.body});
+
+  @override
+  Widget build(BuildContext context) => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(emoji, style: const TextStyle(fontSize: 20)),
+      const SizedBox(width: 10),
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: GoogleFonts.syne(fontSize: 12,
+              fontWeight: FontWeight.w700, color: ZuTheme.textPrimary)),
+            const SizedBox(height: 2),
+            Text(body, style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: ZuTheme.textSecondary, height: 1.5)),
+          ],
+        ),
+      ),
     ],
   );
 }
