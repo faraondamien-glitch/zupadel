@@ -131,7 +131,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                             padding: const EdgeInsets.only(bottom: 12),
                             child: _ScoredMatchCard(
                               scored: sm,
-                              onTap:  () => context.go('/matches/${sm.match.id}'),
+                              onTap:  () => context.push('/matches/${sm.match.id}'),
                               onJoin: sm.match.status == MatchStatus.open
                                   ? () => _handleJoin(ctx, sm.match)
                                   : null,
@@ -184,7 +184,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   ? SliverToBoxAdapter(
                       child: _NearbyEmptyState(
                         position:  position,
-                        onCreate:  () => context.go('/matches/create'),
+                        onCreate:  () => context.push('/matches/create'),
                       ),
                     )
                   : SliverList(
@@ -193,7 +193,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                           padding: const EdgeInsets.only(bottom: 12),
                           child: ZuMatchCard(
                             match: list[i],
-                            onTap:  () => context.go('/matches/${list[i].id}'),
+                            onTap:  () => context.push('/matches/${list[i].id}'),
                             onJoin: list[i].status == MatchStatus.open
                                 ? () => _handleJoin(ctx, list[i])
                                 : null,
@@ -256,7 +256,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => context.go('/matches/create'),
+        onPressed: () => context.push('/matches/create'),
         backgroundColor: ZuTheme.accent,
         foregroundColor: ZuTheme.bgPrimary,
         icon: const Icon(Icons.add),
@@ -296,7 +296,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
           ElevatedButton(
-            onPressed: () { Navigator.pop(context); context.go('/credits'); },
+            onPressed: () { Navigator.pop(context); context.push('/credits'); },
             child: const Text('Acheter des crédits'),
           ),
         ],
@@ -450,7 +450,7 @@ class _HeroHeader extends StatelessWidget {
                         children: [
                           ZuCreditChip(
                             credits: u?.credits ?? 0,
-                            onTap: () => context.go('/credits'),
+                            onTap: () => context.push('/credits'),
                           ),
                           const SizedBox(width: 10),
                           ZuTag('Niveau ${u?.level ?? 1}', style: ZuTagStyle.green),
@@ -779,7 +779,7 @@ class _MyMatchesSection extends ConsumerWidget {
             return Padding(
               padding: const EdgeInsets.only(bottom: 10),
               child: ZuCard(
-                onTap: () => context.go('/matches/${m.id}'),
+                onTap: () => context.push('/matches/${m.id}'),
                 child: Row(
                   children: [
                     Expanded(
@@ -820,8 +820,8 @@ class _TournamentsPreview extends ConsumerWidget {
           ? const SizedBox.shrink()
           : ZuTournamentCard(
               tournament: list.first,
-              onTap:      () => context.go('/tournaments/${list.first.id}'),
-              onRegister: () => context.go('/tournaments/${list.first.id}/register'),
+              onTap:      () => context.push('/tournaments/${list.first.id}'),
+              onRegister: () => context.push('/tournaments/${list.first.id}/register'),
             ),
     );
   }

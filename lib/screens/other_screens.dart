@@ -49,7 +49,7 @@ class _TournamentListScreenState extends ConsumerState<TournamentListScreen> {
         title: const Text('Tournois'),
         actions: [
           TextButton.icon(
-            onPressed: () => context.go('/tournaments/create'),
+            onPressed: () => context.push('/tournaments/create'),
             icon: const Icon(Icons.add, size: 18),
             label: Text('Créer', style: GoogleFonts.syne(fontWeight: FontWeight.w700)),
             style: TextButton.styleFrom(foregroundColor: ZuTheme.accent),
@@ -97,7 +97,7 @@ class _TournamentListScreenState extends ConsumerState<TournamentListScreen> {
                         title: 'Aucun tournoi',
                         subtitle: 'Organise le premier tournoi de ta région !',
                         buttonLabel: 'Créer un tournoi',
-                        onButton: () => context.go('/tournaments/create'),
+                        onButton: () => context.push('/tournaments/create'),
                       )
                     : ListView.builder(
                         padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
@@ -106,9 +106,9 @@ class _TournamentListScreenState extends ConsumerState<TournamentListScreen> {
                           padding: const EdgeInsets.only(bottom: 16),
                           child: ZuTournamentCard(
                             tournament: filtered[i],
-                            onTap: () => context.go('/tournaments/${filtered[i].id}'),
+                            onTap: () => context.push('/tournaments/${filtered[i].id}'),
                             onRegister: filtered[i].isOpen
-                                ? () => context.go('/tournaments/${filtered[i].id}/register')
+                                ? () => context.push('/tournaments/${filtered[i].id}/register')
                                 : null,
                           ),
                         ),
@@ -338,7 +338,7 @@ class TournamentDetailScreen extends ConsumerWidget {
             actions: [
               if (t.isOpen && !isRegistered)
                 TextButton(
-                  onPressed: () => context.go('/tournaments/$tournamentId/register'),
+                  onPressed: () => context.push('/tournaments/$tournamentId/register'),
                   child: Text('S\'inscrire',
                     style: GoogleFonts.syne(fontWeight: FontWeight.w700, color: ZuTheme.accent)),
                 ),
@@ -429,7 +429,7 @@ class TournamentDetailScreen extends ConsumerWidget {
                   label: t.isFree
                       ? 'S\'inscrire gratuitement'
                       : 'Payer ${t.entryFee.toStringAsFixed(0)} € et s\'inscrire',
-                  onPressed: () => context.go('/tournaments/$tournamentId/register'),
+                  onPressed: () => context.push('/tournaments/$tournamentId/register'),
                 ),
             ],
           ),
@@ -756,7 +756,7 @@ class _CoachListScreenState extends ConsumerState<CoachListScreen> {
                       padding: const EdgeInsets.only(bottom: 12),
                       child: ZuCoachCard(
                         coach: c,
-                        onTap: () => context.go('/coaching/${c.id}'),
+                        onTap: () => context.push('/coaching/${c.id}'),
                       ),
                     )),
                     // CTA devenir coach
@@ -780,7 +780,7 @@ class _CoachListScreenState extends ConsumerState<CoachListScreen> {
                           const SizedBox(height: 16),
                           ZuButton(
                             label: 'Créer mon profil coach',
-                            onPressed: () => context.go('/coaching/create-profile'),
+                            onPressed: () => context.push('/coaching/create-profile'),
                           ),
                         ],
                       ),
@@ -830,7 +830,7 @@ class ProfileScreen extends ConsumerWidget {
               child: Column(
                 children: [
                   GestureDetector(
-                    onTap: () => context.go('/profile/edit'),
+                    onTap: () => context.push('/profile/edit'),
                     child: Stack(
                       children: [
                         Container(
@@ -874,7 +874,7 @@ class ProfileScreen extends ConsumerWidget {
                   const SizedBox(height: 16),
                   ZuCreditChip(
                     credits: user?.credits ?? 0,
-                    onTap: () => context.go('/credits'),
+                    onTap: () => context.push('/credits'),
                   ),
                 ],
               ),
@@ -953,7 +953,7 @@ class ProfileScreen extends ConsumerWidget {
                       icon: '⬡',
                       label: 'Crédits & transactions',
                       trailing: ZuCreditChip(credits: user?.credits ?? 0),
-                      onTap: () => context.go('/credits'),
+                      onTap: () => context.push('/credits'),
                     ),
                     const Divider(height: 1),
                     _MenuRow(
@@ -970,7 +970,7 @@ class ProfileScreen extends ConsumerWidget {
                     _MenuRow(
                       icon: '📊',
                       label: 'Partager mes stats',
-                      onTap: () => context.go('/profile/share-stats'),
+                      onTap: () => context.push('/profile/share-stats'),
                     ),
                     const Divider(height: 1),
                     _MenuRow(
@@ -981,19 +981,19 @@ class ProfileScreen extends ConsumerWidget {
                           : user?.fftLicense != null
                               ? ZuTag('En attente de synchro', style: ZuTagStyle.neutral)
                               : ZuTag('Ajouter ma licence', style: ZuTagStyle.neutral),
-                      onTap: () => context.go('/profile/edit'),
+                      onTap: () => context.push('/profile/edit'),
                     ),
                     const Divider(height: 1),
                     _MenuRow(
                       icon: '🔔',
                       label: 'Notifications',
-                      onTap: () => context.go('/settings/notifications'),
+                      onTap: () => context.push('/settings/notifications'),
                     ),
                     const Divider(height: 1),
                     _MenuRow(
                       icon: '⚙️',
                       label: 'Paramètres',
-                      onTap: () => context.go('/settings'),
+                      onTap: () => context.push('/settings'),
                     ),
                   ],
                 ),
@@ -3472,7 +3472,7 @@ class _BookSlotScreenState extends ConsumerState<BookSlotScreen> {
         priceCredits:    widget.club.pricePerSlotCredits,
       );
       if (mounted) {
-        context.go('/clubs/${widget.clubId}/reservations/$resId');
+        context.pushReplacement('/clubs/${widget.clubId}/reservations/$resId');
       }
     } on FirebaseFunctionsException catch (e) {
       if (mounted) {
@@ -3665,7 +3665,7 @@ class ReservationConfirmScreen extends ConsumerWidget {
               ZuButton(
                 label: 'Créer un match sur ce créneau',
                 outlined: true,
-                onPressed: () => context.go(
+                onPressed: () => context.push(
                   '/matches/create',
                   extra: {'reservationId': res.id, 'club': res.clubName},
                 ),

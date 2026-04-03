@@ -63,9 +63,10 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(path: '/clubs', builder: (_, __) => const ClubListScreen()),
           GoRoute(path: '/leaderboard', builder: (_, __) => const LeaderboardScreen()),
           GoRoute(path: '/profile', builder: (_, __) => const ProfileScreen()),
-          GoRoute(path: '/credits', builder: (_, __) => const CreditsScreen()),
         ],
       ),
+      // Routes hors shell — avec bouton retour
+      GoRoute(path: '/credits', builder: (_, __) => const CreditsScreen()),
       // Routes terrains
       GoRoute(
         path: '/clubs/:clubId',

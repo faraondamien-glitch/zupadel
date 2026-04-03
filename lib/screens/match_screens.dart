@@ -181,7 +181,7 @@ class _MatchListScreenState extends ConsumerState<MatchListScreen> {
                     title: 'Aucun match disponible',
                     subtitle: 'Sois le premier à créer un match !',
                     buttonLabel: 'Créer un match',
-                    onButton: () => context.go('/matches/create'),
+                    onButton: () => context.push('/matches/create'),
                   );
                 }
                 return ListView.builder(
@@ -191,7 +191,7 @@ class _MatchListScreenState extends ConsumerState<MatchListScreen> {
                         padding: const EdgeInsets.only(bottom: 12),
                         child: ZuMatchCard(
                           match: filtered[i],
-                          onTap:  () => context.go('/matches/${filtered[i].id}'),
+                          onTap:  () => context.push('/matches/${filtered[i].id}'),
                           onJoin: filtered[i].status == MatchStatus.open
                               ? () => _joinMatch(ctx, filtered[i])
                               : null,
@@ -204,7 +204,7 @@ class _MatchListScreenState extends ConsumerState<MatchListScreen> {
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => context.go('/matches/create'),
+        onPressed: () => context.push('/matches/create'),
         backgroundColor: ZuTheme.accent,
         foregroundColor: ZuTheme.bgPrimary,
         icon: const Icon(Icons.add),
@@ -681,7 +681,7 @@ class _CreateMatchScreenState extends ConsumerState<CreateMatchScreen> {
         visibility: _visibility,
         note:       _noteController.text.trim().isEmpty ? null : _noteController.text.trim(),
       );
-      if (mounted) context.go('/matches/$id');
+      if (mounted) context.pushReplacement('/matches/$id');
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erreur : $e')));
     } finally {
@@ -1026,7 +1026,7 @@ class MatchDetailScreen extends ConsumerWidget {
                   children: [
                     ZuButton(
                       label: 'Terminer le match',
-                      onPressed: () => context.go('/matches/$matchId/finish'),
+                      onPressed: () => context.push('/matches/$matchId/finish'),
                     ),
                     const SizedBox(height: 10),
                     ZuButton(
@@ -1040,7 +1040,7 @@ class MatchDetailScreen extends ConsumerWidget {
               else if (isPlayer && match.status == MatchStatus.finished) ...[
                 ZuButton(
                   label: 'Laisser un avis · +1 crédit',
-                  onPressed: () => context.go('/matches/$matchId/review'),
+                  onPressed: () => context.push('/matches/$matchId/review'),
                 ),
               ],
               const SizedBox(height: 40),
@@ -1661,7 +1661,7 @@ class _FinishMatchScreenState extends ConsumerState<FinishMatchScreen> {
         winnerTeam: _winnerTeam,
       );
       if (mounted) {
-        context.go('/matches/${widget.matchId}');
+        context.pop();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Match terminé ! Les joueurs peuvent laisser un avis.')),
         );
