@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,7 +10,9 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import '../models/models.dart';
 
 // ══════════════════════════════════════════════
@@ -32,6 +35,41 @@ class AuthService {
 
   Future<void> sendPasswordReset(String email) =>
       _auth.sendPasswordResetEmail(email: email);
+
+  Future<UserCredential?> signInWithGoogle() async {
+    if (kIsWeb) {
+      final provider = GoogleAuthProvider();
+      return await _auth.signInWithPopup(provider);
+    }
+    final googleUser = await GoogleSignIn().signIn();
+    if (googleUser == null) return null; // annulé par l'utilisateur
+    final googleAuth = await googleUser.authentication;
+    final credential = GoogleAuthProvider.credential(
+      accessToken: googleAuth.accessToken,
+      idToken:     googleAuth.idToken,
+    );
+    return await _auth.signInWithCredential(credential);
+  }
+
+  /// Sign in with Apple — disponible sur iOS 13+, macOS 10.15+, web.
+  /// À appeler uniquement sur les plateformes supportées.
+  Future<UserCredential?> signInWithApple() async {
+    final appleCredential = await SignInWithApple.getAppleIDCredential(
+      scopes: [
+        AppleIDAuthorizationScopes.email,
+        AppleIDAuthorizationScopes.fullName,
+      ],
+    );
+    final oauthCredential = OAuthProvider('apple.com').credential(
+      idToken:     appleCredential.identityToken,
+      accessToken: appleCredential.authorizationCode,
+    );
+    return await _auth.signInWithCredential(oauthCredential);
+  }
+
+  /// Vérifie si Apple Sign-In est disponible sur la plateforme courante.
+  static bool get isAppleSignInAvailable =>
+      kIsWeb || (!kIsWeb && (Platform.isIOS || Platform.isMacOS));
 }
 
 final authServiceProvider = Provider<AuthService>((ref) => AuthService());
@@ -62,6 +100,7 @@ class UserService {
     required String firstName,
     required String lastName,
     String? referralCode,
+    String? photoUrl,
   }) async {
     final code = _generateCode(firstName);
     final batch = _db.batch();
@@ -71,6 +110,7 @@ class UserService {
       'firstName':     firstName,
       'lastName':      lastName,
       'email':         email,
+      'photoUrl':      photoUrl,
       'level':         1,
       'credits':       10, // C1 : crédits offerts à l'inscription
       'referralCode':  code,
