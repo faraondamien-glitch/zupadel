@@ -254,7 +254,7 @@ class _CreateMatchScreenState extends ConsumerState<CreateMatchScreen> {
   int _duration  = 90;
   int _levelMin  = 3;
   int _levelMax  = 5;
-  int _maxPlayers = 4;
+  int _spotsNeeded = 3;
   MatchType       _type       = MatchType.competitive;
   MatchVisibility _visibility = MatchVisibility.public;
   bool _loading = false;
@@ -494,16 +494,21 @@ class _CreateMatchScreenState extends ConsumerState<CreateMatchScreen> {
     }),
     const SizedBox(height: 20),
 
-    Text('Nombre de joueurs', style: Theme.of(context).textTheme.headlineSmall),
+    Text('Joueurs recherchés', style: Theme.of(context).textTheme.headlineSmall),
+    const SizedBox(height: 4),
+    Text(
+      'Combien de joueurs tu cherches pour compléter ton match ?',
+      style: Theme.of(context).textTheme.bodySmall,
+    ),
     const SizedBox(height: 10),
     Row(
-      children: [2, 4].map((n) {
-        final sel = _maxPlayers == n;
+      children: [1, 2, 3].map((n) {
+        final sel = _spotsNeeded == n;
         return Expanded(
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4),
             child: GestureDetector(
-              onTap: () => setState(() => _maxPlayers = n),
+              onTap: () => setState(() => _spotsNeeded = n),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 150),
                 padding: const EdgeInsets.symmetric(vertical: 16),
@@ -518,15 +523,22 @@ class _CreateMatchScreenState extends ConsumerState<CreateMatchScreen> {
                 child: Column(
                   children: [
                     Text(
-                      n == 2 ? '👥' : '👥👥',
+                      ['1️⃣', '2️⃣', '3️⃣'][n - 1],
                       style: const TextStyle(fontSize: 22),
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      '$n joueurs',
+                      n == 1 ? '1 joueur' : '$n joueurs',
                       style: GoogleFonts.syne(
                         fontSize: 13, fontWeight: FontWeight.w700,
                         color: sel ? ZuTheme.accent : ZuTheme.textPrimary,
+                      ),
+                    ),
+                    Text(
+                      'Total : ${1 + n}',
+                      style: GoogleFonts.dmSans(
+                        fontSize: 11,
+                        color: sel ? ZuTheme.accent.withOpacity(0.8) : ZuTheme.textSecondary,
                       ),
                     ),
                   ],
@@ -566,7 +578,7 @@ class _CreateMatchScreenState extends ConsumerState<CreateMatchScreen> {
               MatchType.training    => 'Training',
             },
           ),
-          _RecapRow(icon: '👥', label: '$_maxPlayers joueurs max'),
+          _RecapRow(icon: '👥', label: 'Cherche $_spotsNeeded joueur${_spotsNeeded > 1 ? 's' : ''} (${1 + _spotsNeeded} total)'),
         ],
       ),
     ),
@@ -676,7 +688,7 @@ class _CreateMatchScreenState extends ConsumerState<CreateMatchScreen> {
         duration:   _duration,
         levelMin:   _levelMin,
         levelMax:   _levelMax,
-        maxPlayers: _maxPlayers,
+        maxPlayers: 1 + _spotsNeeded,
         type:       _type,
         visibility: _visibility,
         note:       _noteController.text.trim().isEmpty ? null : _noteController.text.trim(),
