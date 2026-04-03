@@ -74,16 +74,18 @@ void _setupFcmHandlers() {
     if (ctx == null) return;
     final matchId      = message.data['matchId'];
     final tournamentId = message.data['tournamentId'];
+    final convId       = message.data['convId'];
     ScaffoldMessenger.of(ctx).showSnackBar(
       SnackBar(
         content: Text('${notification.title ?? ''}: ${notification.body ?? ''}'),
         duration: const Duration(seconds: 4),
-        action: (matchId != null || tournamentId != null)
+        action: (matchId != null || tournamentId != null || convId != null)
             ? SnackBarAction(
                 label: 'Voir',
                 onPressed: () {
-                  if (matchId != null)      GoRouter.of(ctx).go('/matches/$matchId');
-                  if (tournamentId != null) GoRouter.of(ctx).go('/tournaments/$tournamentId');
+                  if (convId != null)       GoRouter.of(ctx).go('/messages/$convId');
+                  else if (matchId != null)      GoRouter.of(ctx).go('/matches/$matchId');
+                  else if (tournamentId != null) GoRouter.of(ctx).go('/tournaments/$tournamentId');
                 },
               )
             : null,
@@ -107,10 +109,12 @@ void _setupFcmHandlers() {
 void _handleNotificationTap(RemoteMessage message) {
   final ctx          = routerNavigatorKey.currentContext;
   if (ctx == null) return;
+  final convId       = message.data['convId'];
   final matchId      = message.data['matchId'];
   final tournamentId = message.data['tournamentId'];
-  if (matchId != null)      GoRouter.of(ctx).go('/matches/$matchId');
-  if (tournamentId != null) GoRouter.of(ctx).go('/tournaments/$tournamentId');
+  if (convId != null)       GoRouter.of(ctx).go('/messages/$convId');
+  else if (matchId != null)      GoRouter.of(ctx).go('/matches/$matchId');
+  else if (tournamentId != null) GoRouter.of(ctx).go('/tournaments/$tournamentId');
 }
 
 Future<void> _initFcm() async {

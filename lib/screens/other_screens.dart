@@ -2465,6 +2465,8 @@ class _NotificationSettingsScreenState
   bool _matchFinished  = true;
   bool _tournaments    = true;
   bool _coaching       = true;
+  bool _messages       = true;
+  bool _courtBooking   = true;
   bool _loaded         = false;
   bool _saving         = false;
 
@@ -2489,6 +2491,8 @@ class _NotificationSettingsScreenState
         _matchFinished  = prefs['matchFinished']  as bool? ?? true;
         _tournaments    = prefs['tournaments']    as bool? ?? true;
         _coaching       = prefs['coaching']       as bool? ?? true;
+        _messages       = prefs['messages']       as bool? ?? true;
+        _courtBooking   = prefs['courtBooking']   as bool? ?? true;
         _loaded         = true;
       });
     } else if (mounted) {
@@ -2508,6 +2512,8 @@ class _NotificationSettingsScreenState
         'matchFinished':  _matchFinished,
         'tournaments':    _tournaments,
         'coaching':       _coaching,
+        'messages':       _messages,
+        'courtBooking':   _courtBooking,
       },
     });
     if (mounted) setState(() => _saving = false);
@@ -2551,6 +2557,10 @@ class _NotificationSettingsScreenState
                           (v) => setState(() => _toggle(v, (x) => _tournaments = x))),
                       _NotifRow('Coaching', _coaching,
                           (v) => setState(() => _toggle(v, (x) => _coaching = x))),
+                      _NotifRow('Messages', _messages,
+                          (v) => setState(() => _toggle(v, (x) => _messages = x))),
+                      _NotifRow('Réservation terrain', _courtBooking,
+                          (v) => setState(() => _toggle(v, (x) => _courtBooking = x))),
                     ],
                   ),
                 ),

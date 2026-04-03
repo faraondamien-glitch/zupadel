@@ -126,6 +126,7 @@ export const stripeWebhook = onRequest(
         await sendNotification(firebaseUid, {
           title: "Inscription confirmée ! 🏆",
           body:  "Ton paiement est validé. Bonne chance au tournoi !",
+          type:  "tournaments",
           data:  {tournamentId},
         });
       } else if (firebaseUid && credits) {
@@ -169,6 +170,7 @@ export const stripeWebhook = onRequest(
         await sendNotification(firebaseUid, {
           title: "Abonnement coach actif ! 🏋️",
           body:  "Ton profil coach est visible jusqu'au " + nextMonth.toLocaleDateString("fr-FR"),
+          type:  "coaching",
         });
       }
     }
@@ -417,6 +419,7 @@ export const autoAcceptPlayers = onSchedule(
         await sendNotification(uid, {
           title: "Demande acceptée ! 🎾",
           body: `Tu es accepté dans le match à ${match.club}`,
+          type: "matchAccepted",
         });
       }
       await batch.commit();
@@ -461,6 +464,7 @@ export const onMatchCreated = onDocumentCreated(
       await sendNotification(doc.id, {
         title: "Nouveau match près de toi ! 🎾",
         body:  `${match.club} · Niveau ${match.levelMin}-${match.levelMax}`,
+        type:  "matchInvites",
         data:  {matchId},
       });
       notifiedCount++;
@@ -613,7 +617,8 @@ export const invitePlayerToMatch = onCall(
     await sendNotification(invitedUid, {
       title: "Tu as été invité ! 🎾",
       body:  `${firstName} t'invite à rejoindre un match à ${match.club}`,
-      data:  {matchId, type: "invitation"},
+      type:  "matchInvites",
+      data:  {matchId, action: "invitation"},
     });
 
     return {success: true};
@@ -659,6 +664,7 @@ export const onMatchCancelled = onDocumentUpdated(
       await sendNotification(uid, {
         title: "Match annulé 😔",
         body: `Le match à ${after.club} a été annulé. 1 crédit remboursé.`,
+        type: "matchCancelled",
       });
     }
     await batch.commit();
@@ -678,6 +684,7 @@ export const onMatchFinished = onDocumentUpdated(
       sendNotification(uid, {
         title: "Match terminé ! Laisse un avis 🌟",
         body: `+1 crédit offert pour ton avis sur le match à ${after.club}`,
+        type: "matchReview",
         data: {matchId: event.params.matchId},
       })
     );
@@ -699,6 +706,7 @@ export const onTournamentStatusChanged = onDocumentUpdated(
       body: isApproved
         ? `Ton tournoi "${after.title}" est maintenant visible.`
         : `Ton tournoi "${after.title}" n'a pas été approuvé.`,
+      type: "tournaments",
     });
   }
 );
@@ -1269,6 +1277,7 @@ export const bookCourtSlot = onCall(
     await sendNotification(uid, {
       title: "Terrain réservé ! 🎾",
       body:  `${courtName} @ ${clubName} — ${new Date(startTime).toLocaleTimeString("fr-FR", {hour: "2-digit", minute: "2-digit"})}`,
+      type:  "courtBooking",
     });
 
     return {reservationId};
@@ -1290,6 +1299,7 @@ export const notifyPlayerAccepted = onCall(
     await sendNotification(playerId, {
       title: "Demande acceptée ! 🎾",
       body: `Tu es accepté dans le match à ${club}`,
+      type: "matchAccepted",
       data: {matchId},
     });
     return {success: true};
@@ -1307,6 +1317,7 @@ export const notifyPlayerRefused = onCall(
     await sendNotification(playerId, {
       title: "Demande refusée",
       body: `Ta demande pour le match à ${club} a été refusée. 1 crédit remboursé.`,
+      type: "matchAccepted",
       data: {matchId},
     });
     return {success: true};
@@ -1461,19 +1472,72 @@ export const syncFftRankings = onSchedule(
   }
 );
 
+// ══════════════════════════════════════════════
+//  NOTIFICATIONS MESSAGES (trigger Firestore)
+// ══════════════════════════════════════════════
+
+export const onNewMessage = onDocumentCreated(
+  {document: "conversations/{convId}/messages/{msgId}", region: "europe-west3"},
+  async (event) => {
+    const data = event.data?.data();
+    if (!data || data.type === "system") return;
+
+    const db       = getDb();
+    const convId   = event.params.convId;
+    const senderId = data.senderId as string;
+    const text     = (data.text as string | undefined) ?? "";
+
+    const convDoc = await db.collection("conversations").doc(convId).get();
+    if (!convDoc.exists) return;
+
+    const participantIds = (convDoc.data()?.participantIds as string[]) ?? [];
+    const matchClub      = convDoc.data()?.matchClub as string | undefined;
+
+    const senderDoc = await db.collection("users").doc(senderId).get();
+    const firstName = (senderDoc.data()?.firstName as string | undefined) ?? "Quelqu'un";
+
+    const title = matchClub ? `${firstName} · ${matchClub}` : firstName;
+    const body  = text.length > 100 ? `${text.substring(0, 97)}…` : text;
+
+    await Promise.all(
+      participantIds
+        .filter((uid) => uid !== senderId)
+        .map((uid) => sendNotification(uid, {
+          title,
+          body,
+          type: "messages",
+          data: {convId, senderId},
+        }))
+    );
+  }
+);
+
+// ── Helper notifications (respecte les préférences utilisateur) ───
+
 async function sendNotification(
   uid: string,
-  payload: {title: string; body: string; data?: Record<string, string>}
+  payload: {title: string; body: string; data?: Record<string, string>; type?: string}
 ) {
   const db = getDb();
   try {
     const userDoc  = await db.collection("users").doc(uid).get();
-    const fcmToken = userDoc.data()?.fcmToken as string | undefined;
+    const userData = userDoc.data();
+    const fcmToken = userData?.fcmToken as string | undefined;
     if (!fcmToken) return;
+
+    // Vérifier les préférences de l'utilisateur
+    if (payload.type) {
+      const prefs = userData?.notifPrefs as Record<string, boolean> | undefined;
+      if (prefs && prefs[payload.type] === false) {
+        console.log(`Notif '${payload.type}' désactivée pour ${uid} — ignorée`);
+        return;
+      }
+    }
+
     await admin.messaging().send({
       token: fcmToken,
       notification: {title: payload.title, body: payload.body},
-      data: payload.data || {},
+      data: payload.data ?? {},
     });
   } catch (e) {
     console.error(`Erreur notification pour ${uid}:`, e);
