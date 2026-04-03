@@ -1019,11 +1019,18 @@ class MatchDetailScreen extends ConsumerWidget {
                 const SizedBox(height: 16),
               ],
 
-              // Joueurs suggérés (organisateur, match pas plein)
+              // Joueurs suggérés + invitation (organisateur, match pas plein)
               if (isOrganizer && match.status == MatchStatus.open && !match.isFull) ...[
                 ZuSectionTitle('Joueurs suggérés'),
                 const SizedBox(height: 8),
                 _SuggestedPlayersSection(matchId: matchId),
+                const SizedBox(height: 16),
+                ZuSectionTitle('Inviter un ami'),
+                const SizedBox(height: 8),
+                _InviteFriendSection(
+                  matchId:     matchId,
+                  excludeUids: [...match.playerIds, ...match.pendingIds],
+                ),
                 const SizedBox(height: 16),
               ],
 
@@ -1908,4 +1915,157 @@ class _ScoreCounter extends StatelessWidget {
       ),
     ],
   );
+}
+
+// ─── Inviter un ami par recherche ────────────────────────────────
+
+class _InviteFriendSection extends ConsumerStatefulWidget {
+  final String       matchId;
+  final List<String> excludeUids;
+  const _InviteFriendSection({required this.matchId, required this.excludeUids});
+
+  @override
+  ConsumerState<_InviteFriendSection> createState() => _InviteFriendSectionState();
+}
+
+class _InviteFriendSectionState extends ConsumerState<_InviteFriendSection> {
+  final _searchCtrl = TextEditingController();
+  List<Map<String, dynamic>> _results  = [];
+  final Set<String>          _invited  = {};
+  bool                       _searching = false;
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _search(String query) async {
+    if (query.trim().length < 2) {
+      setState(() => _results = []);
+      return;
+    }
+    setState(() => _searching = true);
+    try {
+      final res = await ref.read(matchmakingServiceProvider).searchPlayers(
+        query,
+        excludeUids: widget.excludeUids,
+      );
+      if (mounted) setState(() => _results = res);
+    } finally {
+      if (mounted) setState(() => _searching = false);
+    }
+  }
+
+  Future<void> _invite(String uid) async {
+    setState(() => _invited.add(uid));
+    try {
+      await ref.read(matchmakingServiceProvider)
+          .invitePlayer(matchId: widget.matchId, invitedUid: uid);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _invited.remove(uid));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur : $e')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        // Champ de recherche
+        TextField(
+          controller: _searchCtrl,
+          onChanged: _search,
+          style: GoogleFonts.dmSans(color: ZuTheme.textPrimary),
+          decoration: InputDecoration(
+            hintText: 'Rechercher par prénom…',
+            hintStyle: GoogleFonts.dmSans(color: ZuTheme.textSecondary),
+            prefixIcon: const Icon(Icons.search, color: ZuTheme.textSecondary, size: 20),
+            suffixIcon: _searching
+                ? const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: SizedBox(width: 16, height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2)),
+                  )
+                : null,
+            filled: true,
+            fillColor: ZuTheme.bgCard,
+            contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: ZuTheme.borderColor),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: ZuTheme.borderColor),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: ZuTheme.accent, width: 1.5),
+            ),
+          ),
+        ),
+
+        // Résultats
+        if (_results.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          ..._results.map((p) {
+            final uid       = p['uid'] as String;
+            final firstName = p['firstName'] as String? ?? '';
+            final lastName  = p['lastName']  as String? ?? '';
+            final level     = p['level']     as int?    ?? 1;
+            final photoUrl  = p['photoUrl']  as String?;
+            final invited   = _invited.contains(uid);
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: ZuCard(
+                child: Row(
+                  children: [
+                    ZuAvatar(
+                      photoUrl: photoUrl,
+                      initials: '${firstName.isNotEmpty ? firstName[0] : '?'}'
+                                '${lastName.isNotEmpty  ? lastName[0]  : ''}',
+                      size: 36,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('$firstName $lastName',
+                            style: Theme.of(context).textTheme.headlineSmall),
+                          Text('Niveau $level',
+                            style: Theme.of(context).textTheme.bodySmall),
+                        ],
+                      ),
+                    ),
+                    if (invited)
+                      ZuTag('Invité ✓', style: ZuTagStyle.green)
+                    else
+                      TextButton(
+                        onPressed: () => _invite(uid),
+                        child: Text('Inviter',
+                          style: GoogleFonts.syne(
+                            fontSize: 13, fontWeight: FontWeight.w700,
+                            color: ZuTheme.accent,
+                          )),
+                      ),
+                  ],
+                ),
+              ),
+            );
+          }),
+        ] else if (_searchCtrl.text.length >= 2 && !_searching) ...[
+          const SizedBox(height: 8),
+          Text('Aucun joueur trouvé pour "${_searchCtrl.text}"',
+            style: Theme.of(context).textTheme.bodySmall),
+        ],
+      ],
+    );
+  }
 }

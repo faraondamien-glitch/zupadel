@@ -1179,6 +1179,35 @@ class MatchmakingService {
         .httpsCallable('invitePlayerToMatch')
         .call({'matchId': matchId, 'invitedUid': invitedUid});
   }
+
+  /// Recherche des joueurs par prénom (prefix search, max 20 résultats).
+  /// Exclut les UIDs passés en paramètre (ex: déjà dans le match).
+  Future<List<Map<String, dynamic>>> searchPlayers(
+    String query, {
+    List<String> excludeUids = const [],
+  }) async {
+    if (query.trim().isEmpty) return [];
+    final db = FirebaseFirestore.instance;
+    final q  = query.trim();
+    final end = q.substring(0, q.length - 1) +
+        String.fromCharCode(q.codeUnitAt(q.length - 1) + 1);
+    final snap = await db.collection('users')
+        .orderBy('firstName')
+        .startAt([q])
+        .endBefore([end])
+        .limit(20)
+        .get();
+    return snap.docs
+        .where((d) => !excludeUids.contains(d.id))
+        .map((d) => {
+          'uid':       d.id,
+          'firstName': d.data()['firstName'] as String? ?? '',
+          'lastName':  d.data()['lastName']  as String? ?? '',
+          'level':     d.data()['level']     as int?    ?? 1,
+          'photoUrl':  d.data()['photoUrl']  as String?,
+        })
+        .toList();
+  }
 }
 
 final matchmakingServiceProvider = Provider<MatchmakingService>((ref) => MatchmakingService());
