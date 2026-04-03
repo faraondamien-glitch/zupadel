@@ -315,12 +315,12 @@ class _DispoPickerSheet extends StatefulWidget {
 }
 
 class _DispoPickerSheetState extends State<_DispoPickerSheet> {
-  int _selected = 3;
+  int _selected = 24;
 
   static const _options = [
-    (hours: 1,  label: '1 heure',   sublabel: 'Pour un match rapide'),
-    (hours: 3,  label: '3 heures',  sublabel: 'Le plus courant'),
-    (hours: 8,  label: '8 heures',  sublabel: 'Toute la journée'),
+    (hours: 12, label: '12 heures',  sublabel: 'Ce soir ou demain matin'),
+    (hours: 24, label: '1 jour',     sublabel: 'Le plus courant'),
+    (hours: 48, label: '2 jours',    sublabel: 'Prêt pour le week-end'),
   ];
 
   @override
@@ -390,7 +390,7 @@ class _DispoPickerSheetState extends State<_DispoPickerSheet> {
           )),
           const SizedBox(height: 8),
           ZuButton(
-            label: 'Je suis dispo — $_selected h',
+            label: 'Je suis dispo — ${_selected >= 24 ? '${_selected ~/ 24}j' : '${_selected}h'}',
             onPressed: () => Navigator.pop(context, _selected),
           ),
         ],
@@ -513,7 +513,7 @@ class _HeroHeader extends StatelessWidget {
                           )
                         else
                           Text(
-                            'Active pour trouver un match',
+                            'Désactivé — tu ne recevras pas de demandes',
                             style: GoogleFonts.dmSans(
                               fontSize: 11,
                               color: ZuTheme.textSecondary,
@@ -546,7 +546,9 @@ class _HeroHeader extends StatelessWidget {
   String _formatExpiry(DateTime dt) {
     final diff = dt.difference(DateTime.now());
     if (diff.inMinutes < 60) return 'dans ${diff.inMinutes} min';
-    return 'dans ${diff.inHours}h';
+    if (diff.inHours < 24)   return 'dans ${diff.inHours}h';
+    if (diff.inHours < 48)   return 'demain';
+    return 'dans ${diff.inDays}j';
   }
 }
 
@@ -578,7 +580,7 @@ class _SuggestedEmptyState extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Text(
-              'Dis-nous que tu es prêt à jouer et on te trouve les meilleurs matchs compatibles avec ton niveau.',
+              'Sans disponibilité active, tu ne reçois aucune demande de match. Active-la pour être visible jusqu\'à 48h.',
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: 14),

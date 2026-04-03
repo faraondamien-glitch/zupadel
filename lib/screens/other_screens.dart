@@ -2605,7 +2605,7 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
-  int _defaultDispoHours = 3;
+  int _defaultDispoHours = 24;
   bool _changingPassword  = false;
   final _emailCtrl        = TextEditingController();
   final _pwCtrl           = TextEditingController();
@@ -2642,15 +2642,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Quand tu actives "Je suis disponible", combien de temps rester visible ?',
+                  'Quand tu actives "Je suis disponible", combien de temps rester visible ? (max 48h)',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
                 const SizedBox(height: 12),
                 SegmentedButton<int>(
                   segments: const [
-                    ButtonSegment(value: 1,  label: Text('1h')),
-                    ButtonSegment(value: 3,  label: Text('3h')),
-                    ButtonSegment(value: 8,  label: Text('8h')),
+                    ButtonSegment(value: 12, label: Text('12h')),
+                    ButtonSegment(value: 24, label: Text('1j')),
+                    ButtonSegment(value: 48, label: Text('2j')),
                   ],
                   selected: {_defaultDispoHours},
                   onSelectionChanged: (s) => setState(() => _defaultDispoHours = s.first),

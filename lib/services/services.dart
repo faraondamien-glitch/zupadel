@@ -1017,7 +1017,7 @@ class MatchmakingService {
   /// Récupère la position GPS actuelle si disponible.
   Future<void> setAvailability({
     required bool available,
-    int hours = 3,
+    int hours = 24,
   }) async {
     final expiresAt = DateTime.now().add(Duration(hours: hours));
 

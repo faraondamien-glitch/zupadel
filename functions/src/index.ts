@@ -489,7 +489,7 @@ export const setUserAvailability = onCall(
     const uid = req.auth?.uid;
     if (!uid) throw new HttpsError("unauthenticated", "Login required");
 
-    const {available, hours = 3} = req.data as {available: boolean; hours?: number};
+    const {available, hours = 24} = req.data as {available: boolean; hours?: number};
     const db = getDb();
 
     const expiresAt = new Date(Date.now() + hours * 3600 * 1000);
