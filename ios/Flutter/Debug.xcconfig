@@ -2,4 +2,4 @@
 #include "Generated.xcconfig"
 // Remplace cette valeur par le champ REVERSED_CLIENT_ID de ton GoogleService-Info.plist
 // Format : com.googleusercontent.apps.412115504586-XXXXXXXXXXXXXXXX
-REVERSED_CLIENT_ID = com.googleusercontent.apps.REPLACE_ME
+REVERSED_CLIENT_ID = com.googleusercontent.apps.412115504586-28nlqhb0264o2jtde57vr0e9ourlitlo
