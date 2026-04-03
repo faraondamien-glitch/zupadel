@@ -868,7 +868,7 @@ class ProfileScreen extends ConsumerWidget {
                   Text(user?.fullName ?? 'Joueur', style: Theme.of(context).textTheme.displayMedium),
                   const SizedBox(height: 4),
                   Text(
-                    'Niveau ${user?.level ?? 1}${user?.city != null ? ' · ${user!.city}' : ''}${user?.fftRank != null ? ' · FFT ${user!.fftRank}' : ''}',
+                    'Niveau ${user?.level ?? 1}${user?.city != null ? ' · ${user!.city}' : ''}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   const SizedBox(height: 16),
@@ -975,10 +975,12 @@ class ProfileScreen extends ConsumerWidget {
                     const Divider(height: 1),
                     _MenuRow(
                       icon: '🏅',
-                      label: 'Licence FFT',
-                      trailing: user?.fftLicense != null
-                          ? ZuTag('Enregistrée', style: ZuTagStyle.green)
-                          : ZuTag('Ajouter', style: ZuTagStyle.neutral),
+                      label: 'Classement FFT',
+                      trailing: user?.fftRank != null
+                          ? ZuTag(user!.fftRank!, style: ZuTagStyle.green)
+                          : user?.fftLicense != null
+                              ? ZuTag('En attente…', style: ZuTagStyle.neutral)
+                              : ZuTag('Ajouter ma licence', style: ZuTagStyle.neutral),
                       onTap: () => context.go('/profile/edit'),
                     ),
                     const Divider(height: 1),
@@ -2002,10 +2004,18 @@ class _StatsCard extends StatelessWidget {
                                 ),
                                 if (user?.fftRank != null) ...[
                                   const SizedBox(width: 6),
-                                  Text(
-                                    user!.fftRank!,
-                                    style: GoogleFonts.dmSans(
-                                      fontSize: 10, color: ZuTheme.textSecondary,
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: ZuTheme.accent.withOpacity(0.12),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      'FFT ${user!.fftRank!}',
+                                      style: GoogleFonts.syne(
+                                        fontSize: 9, fontWeight: FontWeight.w700,
+                                        color: ZuTheme.accent,
+                                      ),
                                     ),
                                   ),
                                 ],
