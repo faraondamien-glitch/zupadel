@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+import 'package:share_plus/share_plus.dart';
 import '../theme/zu_theme.dart';
 import '../models/models.dart';
 import '../widgets/widgets.dart';
@@ -1031,6 +1033,8 @@ class MatchDetailScreen extends ConsumerWidget {
                   matchId:     matchId,
                   excludeUids: [...match.playerIds, ...match.pendingIds],
                 ),
+                const SizedBox(height: 12),
+                _ShareMatchLinkCard(match: match),
                 const SizedBox(height: 16),
               ],
 
@@ -2066,6 +2070,125 @@ class _InviteFriendSectionState extends ConsumerState<_InviteFriendSection> {
             style: Theme.of(context).textTheme.bodySmall),
         ],
       ],
+    );
+  }
+}
+
+// ─── Partager le lien du match (joueurs hors-app) ────────────────
+
+class _ShareMatchLinkCard extends StatefulWidget {
+  final ZuMatch match;
+  const _ShareMatchLinkCard({required this.match});
+
+  @override
+  State<_ShareMatchLinkCard> createState() => _ShareMatchLinkCardState();
+}
+
+class _ShareMatchLinkCardState extends State<_ShareMatchLinkCard> {
+  bool _copied = false;
+
+  String get _matchUrl => 'https://zupadel.fr/matches/${widget.match.id}';
+
+  String get _shareText {
+    final m = widget.match;
+    final date = DateFormat('EEE d MMM', 'fr_FR').format(m.startTime);
+    final time = DateFormat('HH:mm').format(m.startTime);
+    return '🎾 Rejoins mon match de padel sur Zupadel !\n\n'
+        '📍 ${m.club}\n'
+        '📅 $date à $time\n'
+        '👥 ${m.availableSlots} place${m.availableSlots > 1 ? 's' : ''} disponible${m.availableSlots > 1 ? 's' : ''}\n\n'
+        '$_matchUrl';
+  }
+
+  void _share() {
+    Share.share(_shareText, subject: 'Match de padel à ${widget.match.club}');
+  }
+
+  void _copyLink() async {
+    await Clipboard.setData(ClipboardData(text: _matchUrl));
+    setState(() => _copied = true);
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _copied = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ZuCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text('🔗', style: TextStyle(fontSize: 18)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Inviter hors de l\'appli',
+                      style: GoogleFonts.syne(
+                        fontSize: 14, fontWeight: FontWeight.w700,
+                        color: ZuTheme.textPrimary,
+                      ),
+                    ),
+                    Text(
+                      'Partage le lien par SMS, WhatsApp, email…',
+                      style: GoogleFonts.dmSans(
+                        fontSize: 12, color: ZuTheme.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          // Affichage du lien
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: ZuTheme.bgPrimary,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: ZuTheme.borderColor),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _matchUrl,
+                    style: GoogleFonts.dmSans(
+                      fontSize: 12, color: ZuTheme.textSecondary,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: _copyLink,
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 200),
+                    child: _copied
+                        ? const Icon(Icons.check, color: ZuTheme.accent, size: 18,
+                            key: ValueKey('check'))
+                        : const Icon(Icons.copy, color: ZuTheme.textSecondary, size: 18,
+                            key: ValueKey('copy')),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: ZuButton(
+              label: 'Partager le lien',
+              onPressed: _share,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
