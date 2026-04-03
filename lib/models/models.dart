@@ -23,7 +23,8 @@ class ZuUser {
   final String? photoUrl;
   final int level;           // 1–7
   final String? fftLicense;
-  final String? fftRank;     // P25, P100, P250...
+  final String? fftRank;            // P25, P100, P250... (auto-synced from FFT)
+  final DateTime? fftRankUpdatedAt; // Date de dernière synchronisation FFT
   final GeoPoint? location;
   final GeoPoint? lastKnownLocation;
   final String? city;
@@ -41,6 +42,7 @@ class ZuUser {
     required this.level,
     this.fftLicense,
     this.fftRank,
+    this.fftRankUpdatedAt,
     this.location,
     this.lastKnownLocation,
     this.city,
@@ -74,6 +76,7 @@ class ZuUser {
       level:               d['level'] ?? 1,
       fftLicense:          d['fftLicense'],
       fftRank:             d['fftRank'],
+      fftRankUpdatedAt:    (d['fftRankUpdatedAt'] as Timestamp?)?.toDate(),
       location:            d['location'] as GeoPoint?,
       lastKnownLocation:   d['lastKnownLocation'] as GeoPoint?,
       city:                d['city'],
@@ -92,6 +95,7 @@ class ZuUser {
     'level':               level,
     'fftLicense':          fftLicense,
     'fftRank':             fftRank,
+    // fftRankUpdatedAt est écrit par la Cloud Function uniquement
     'location':            location,
     'lastKnownLocation':   lastKnownLocation,
     'city':                city,
@@ -107,6 +111,7 @@ class ZuUser {
     level: level ?? this.level,
     fftLicense: fftLicense ?? this.fftLicense,
     fftRank: fftRank ?? this.fftRank,
+    fftRankUpdatedAt: fftRankUpdatedAt,
     location: location,
     lastKnownLocation: lastKnownLocation ?? this.lastKnownLocation,
     city: city,
@@ -138,6 +143,9 @@ class ZuMatch {
   final List<String> pendingIds;
   final String? note;
   final String? score;
+  final List<String> team1Ids;    // équipe 1 (dérivée de playerIds à la fin du match)
+  final List<String> team2Ids;    // équipe 2
+  final int? winnerTeam;          // 1 ou 2 — null avant la fin
   final List<String> bettorIds;   // joueurs ayant placé une mise
   final double? avgRating;
   final int ratingCount;
@@ -163,6 +171,9 @@ class ZuMatch {
     required this.pendingIds,
     this.note,
     this.score,
+    this.team1Ids = const [],
+    this.team2Ids = const [],
+    this.winnerTeam,
     this.bettorIds = const [],
     this.avgRating,
     required this.ratingCount,
@@ -191,6 +202,9 @@ class ZuMatch {
       pendingIds:      List<String>.from(d['pendingIds'] ?? []),
       note:            d['note'],
       score:           d['score'],
+      team1Ids:        List<String>.from(d['team1Ids'] ?? []),
+      team2Ids:        List<String>.from(d['team2Ids'] ?? []),
+      winnerTeam:      d['winnerTeam'] as int?,
       bettorIds:       List<String>.from(d['bettorIds'] ?? []),
       avgRating:       (d['avgRating'] as num?)?.toDouble(),
       ratingCount:     d['ratingCount'] ?? 0,
@@ -218,6 +232,9 @@ class ZuMatch {
     'bettorIds':       bettorIds,
     'note':            note,
     'score':           score,
+    'team1Ids':        team1Ids,
+    'team2Ids':        team2Ids,
+    'winnerTeam':      winnerTeam,
     'avgRating':       avgRating,
     'ratingCount':     ratingCount,
     'createdAt':       Timestamp.fromDate(createdAt),
@@ -453,6 +470,11 @@ class UserStats {
   final int setsWon;
   final int setsLost;
   final double avgOpponentLevel;
+  final int eloRating;      // ELO — 1200 par défaut
+  final int rankingPoints;  // Points ligue (engagement + compétition)
+  final int currentStreak;  // Série de victoires en cours
+  final int bestStreak;     // Meilleure série historique
+  final int weeklyPoints;   // Points de la semaine en cours
 
   const UserStats({
     required this.matchesPlayed,
@@ -462,6 +484,11 @@ class UserStats {
     required this.setsWon,
     required this.setsLost,
     required this.avgOpponentLevel,
+    this.eloRating     = 1200,
+    this.rankingPoints = 0,
+    this.currentStreak = 0,
+    this.bestStreak    = 0,
+    this.weeklyPoints  = 0,
   });
 
   double get winRate => matchesPlayed == 0 ? 0 : matchesWon / matchesPlayed;
@@ -475,7 +502,87 @@ class UserStats {
     setsWon:            d['setsWon'] ?? 0,
     setsLost:           d['setsLost'] ?? 0,
     avgOpponentLevel:   (d['avgOpponentLevel'] as num?)?.toDouble() ?? 0,
+    eloRating:          d['eloRating'] ?? 1200,
+    rankingPoints:      d['rankingPoints'] ?? 0,
+    currentStreak:      d['currentStreak'] ?? 0,
+    bestStreak:         d['bestStreak'] ?? 0,
+    weeklyPoints:       d['weeklyPoints'] ?? 0,
   );
+}
+
+// ─── RANKING (public) ────────────────────────────────────────────
+
+class ZuRanking {
+  final String uid;
+  final String firstName;
+  final String lastName;
+  final String? photoUrl;
+  final int level;
+  final String? city;
+  final String? fftRank;
+  final int eloRating;
+  final int rankingPoints;
+  final int matchesPlayed;
+  final int matchesWon;
+  final double winRate;
+  final int currentStreak;
+  final int bestStreak;
+  final int rankPosition;   // Position globale (mise à jour quotidiennement)
+  final int weeklyPoints;
+  final GeoPoint? location; // Dernière position connue (pour filtre géographique)
+  final DateTime updatedAt;
+
+  const ZuRanking({
+    required this.uid,
+    required this.firstName,
+    required this.lastName,
+    this.photoUrl,
+    required this.level,
+    this.city,
+    this.fftRank,
+    required this.eloRating,
+    required this.rankingPoints,
+    required this.matchesPlayed,
+    required this.matchesWon,
+    required this.winRate,
+    required this.currentStreak,
+    required this.bestStreak,
+    required this.rankPosition,
+    required this.weeklyPoints,
+    this.location,
+    required this.updatedAt,
+  });
+
+  String get displayName => '$firstName $lastName';
+  String get initials {
+    final f = firstName.isNotEmpty ? firstName[0].toUpperCase() : '';
+    final l = lastName.isNotEmpty ? lastName[0].toUpperCase() : '';
+    return '$f$l';
+  }
+
+  factory ZuRanking.fromFirestore(DocumentSnapshot doc) {
+    final d = doc.data() as Map<String, dynamic>;
+    return ZuRanking(
+      uid:           doc.id,
+      firstName:     d['firstName'] ?? '',
+      lastName:      d['lastName'] ?? '',
+      photoUrl:      d['photoUrl'],
+      level:         d['level'] ?? 1,
+      city:          d['city'],
+      fftRank:       d['fftRank'],
+      eloRating:     d['eloRating'] ?? 1200,
+      rankingPoints: d['rankingPoints'] ?? 0,
+      matchesPlayed: d['matchesPlayed'] ?? 0,
+      matchesWon:    d['matchesWon'] ?? 0,
+      winRate:       (d['winRate'] as num?)?.toDouble() ?? 0,
+      currentStreak: d['currentStreak'] ?? 0,
+      bestStreak:    d['bestStreak'] ?? 0,
+      rankPosition:  d['rankPosition'] ?? 9999,
+      weeklyPoints:  d['weeklyPoints'] ?? 0,
+      location:      d['location'] as GeoPoint?,
+      updatedAt:     (d['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+    );
+  }
 }
 
 // ─── CLUB PARTENAIRE ─────────────────────────────────────────────

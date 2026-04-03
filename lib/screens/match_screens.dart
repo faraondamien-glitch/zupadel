@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+import 'package:share_plus/share_plus.dart';
 import '../theme/zu_theme.dart';
 import '../models/models.dart';
 import '../widgets/widgets.dart';
@@ -181,7 +183,7 @@ class _MatchListScreenState extends ConsumerState<MatchListScreen> {
                     title: 'Aucun match disponible',
                     subtitle: 'Sois le premier à créer un match !',
                     buttonLabel: 'Créer un match',
-                    onButton: () => context.go('/matches/create'),
+                    onButton: () => context.push('/matches/create'),
                   );
                 }
                 return ListView.builder(
@@ -191,7 +193,7 @@ class _MatchListScreenState extends ConsumerState<MatchListScreen> {
                         padding: const EdgeInsets.only(bottom: 12),
                         child: ZuMatchCard(
                           match: filtered[i],
-                          onTap:  () => context.go('/matches/${filtered[i].id}'),
+                          onTap:  () => context.push('/matches/${filtered[i].id}'),
                           onJoin: filtered[i].status == MatchStatus.open
                               ? () => _joinMatch(ctx, filtered[i])
                               : null,
@@ -204,7 +206,7 @@ class _MatchListScreenState extends ConsumerState<MatchListScreen> {
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => context.go('/matches/create'),
+        onPressed: () => context.push('/matches/create'),
         backgroundColor: ZuTheme.accent,
         foregroundColor: ZuTheme.bgPrimary,
         icon: const Icon(Icons.add),
@@ -254,7 +256,7 @@ class _CreateMatchScreenState extends ConsumerState<CreateMatchScreen> {
   int _duration  = 90;
   int _levelMin  = 3;
   int _levelMax  = 5;
-  int _maxPlayers = 4;
+  int _spotsNeeded = 3;
   MatchType       _type       = MatchType.competitive;
   MatchVisibility _visibility = MatchVisibility.public;
   bool _loading = false;
@@ -494,16 +496,21 @@ class _CreateMatchScreenState extends ConsumerState<CreateMatchScreen> {
     }),
     const SizedBox(height: 20),
 
-    Text('Nombre de joueurs', style: Theme.of(context).textTheme.headlineSmall),
+    Text('Joueurs recherchés', style: Theme.of(context).textTheme.headlineSmall),
+    const SizedBox(height: 4),
+    Text(
+      'Combien de joueurs tu cherches pour compléter ton match ?',
+      style: Theme.of(context).textTheme.bodySmall,
+    ),
     const SizedBox(height: 10),
     Row(
-      children: [2, 4].map((n) {
-        final sel = _maxPlayers == n;
+      children: [1, 2, 3].map((n) {
+        final sel = _spotsNeeded == n;
         return Expanded(
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4),
             child: GestureDetector(
-              onTap: () => setState(() => _maxPlayers = n),
+              onTap: () => setState(() => _spotsNeeded = n),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 150),
                 padding: const EdgeInsets.symmetric(vertical: 16),
@@ -518,15 +525,22 @@ class _CreateMatchScreenState extends ConsumerState<CreateMatchScreen> {
                 child: Column(
                   children: [
                     Text(
-                      n == 2 ? '👥' : '👥👥',
+                      ['1️⃣', '2️⃣', '3️⃣'][n - 1],
                       style: const TextStyle(fontSize: 22),
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      '$n joueurs',
+                      n == 1 ? '1 joueur' : '$n joueurs',
                       style: GoogleFonts.syne(
                         fontSize: 13, fontWeight: FontWeight.w700,
                         color: sel ? ZuTheme.accent : ZuTheme.textPrimary,
+                      ),
+                    ),
+                    Text(
+                      'Total : ${1 + n}',
+                      style: GoogleFonts.dmSans(
+                        fontSize: 11,
+                        color: sel ? ZuTheme.accent.withOpacity(0.8) : ZuTheme.textSecondary,
                       ),
                     ),
                   ],
@@ -566,7 +580,7 @@ class _CreateMatchScreenState extends ConsumerState<CreateMatchScreen> {
               MatchType.training    => 'Training',
             },
           ),
-          _RecapRow(icon: '👥', label: '$_maxPlayers joueurs max'),
+          _RecapRow(icon: '👥', label: 'Cherche $_spotsNeeded joueur${_spotsNeeded > 1 ? 's' : ''} (${1 + _spotsNeeded} total)'),
         ],
       ),
     ),
@@ -676,12 +690,12 @@ class _CreateMatchScreenState extends ConsumerState<CreateMatchScreen> {
         duration:   _duration,
         levelMin:   _levelMin,
         levelMax:   _levelMax,
-        maxPlayers: _maxPlayers,
+        maxPlayers: 1 + _spotsNeeded,
         type:       _type,
         visibility: _visibility,
         note:       _noteController.text.trim().isEmpty ? null : _noteController.text.trim(),
       );
-      if (mounted) context.go('/matches/$id');
+      if (mounted) context.pushReplacement('/matches/$id');
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erreur : $e')));
     } finally {
@@ -1007,11 +1021,20 @@ class MatchDetailScreen extends ConsumerWidget {
                 const SizedBox(height: 16),
               ],
 
-              // Joueurs suggérés (organisateur, match pas plein)
+              // Joueurs suggérés + invitation (organisateur, match pas plein)
               if (isOrganizer && match.status == MatchStatus.open && !match.isFull) ...[
                 ZuSectionTitle('Joueurs suggérés'),
                 const SizedBox(height: 8),
                 _SuggestedPlayersSection(matchId: matchId),
+                const SizedBox(height: 16),
+                ZuSectionTitle('Inviter un ami'),
+                const SizedBox(height: 8),
+                _InviteFriendSection(
+                  matchId:     matchId,
+                  excludeUids: [...match.playerIds, ...match.pendingIds],
+                ),
+                const SizedBox(height: 12),
+                _ShareMatchLinkCard(match: match),
                 const SizedBox(height: 16),
               ],
 
@@ -1026,7 +1049,7 @@ class MatchDetailScreen extends ConsumerWidget {
                   children: [
                     ZuButton(
                       label: 'Terminer le match',
-                      onPressed: () => context.go('/matches/$matchId/finish'),
+                      onPressed: () => context.push('/matches/$matchId/finish'),
                     ),
                     const SizedBox(height: 10),
                     ZuButton(
@@ -1040,7 +1063,7 @@ class MatchDetailScreen extends ConsumerWidget {
               else if (isPlayer && match.status == MatchStatus.finished) ...[
                 ZuButton(
                   label: 'Laisser un avis · +1 crédit',
-                  onPressed: () => context.go('/matches/$matchId/review'),
+                  onPressed: () => context.push('/matches/$matchId/review'),
                 ),
               ],
               const SizedBox(height: 40),
@@ -1661,7 +1684,7 @@ class _FinishMatchScreenState extends ConsumerState<FinishMatchScreen> {
         winnerTeam: _winnerTeam,
       );
       if (mounted) {
-        context.go('/matches/${widget.matchId}');
+        context.pop();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Match terminé ! Les joueurs peuvent laisser un avis.')),
         );
@@ -1896,4 +1919,276 @@ class _ScoreCounter extends StatelessWidget {
       ),
     ],
   );
+}
+
+// ─── Inviter un ami par recherche ────────────────────────────────
+
+class _InviteFriendSection extends ConsumerStatefulWidget {
+  final String       matchId;
+  final List<String> excludeUids;
+  const _InviteFriendSection({required this.matchId, required this.excludeUids});
+
+  @override
+  ConsumerState<_InviteFriendSection> createState() => _InviteFriendSectionState();
+}
+
+class _InviteFriendSectionState extends ConsumerState<_InviteFriendSection> {
+  final _searchCtrl = TextEditingController();
+  List<Map<String, dynamic>> _results  = [];
+  final Set<String>          _invited  = {};
+  bool                       _searching = false;
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _search(String query) async {
+    if (query.trim().length < 2) {
+      setState(() => _results = []);
+      return;
+    }
+    setState(() => _searching = true);
+    try {
+      final res = await ref.read(matchmakingServiceProvider).searchPlayers(
+        query,
+        excludeUids: widget.excludeUids,
+      );
+      if (mounted) setState(() => _results = res);
+    } finally {
+      if (mounted) setState(() => _searching = false);
+    }
+  }
+
+  Future<void> _invite(String uid) async {
+    setState(() => _invited.add(uid));
+    try {
+      await ref.read(matchmakingServiceProvider)
+          .invitePlayer(matchId: widget.matchId, invitedUid: uid);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _invited.remove(uid));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur : $e')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        // Champ de recherche
+        TextField(
+          controller: _searchCtrl,
+          onChanged: _search,
+          style: GoogleFonts.dmSans(color: ZuTheme.textPrimary),
+          decoration: InputDecoration(
+            hintText: 'Rechercher par prénom…',
+            hintStyle: GoogleFonts.dmSans(color: ZuTheme.textSecondary),
+            prefixIcon: const Icon(Icons.search, color: ZuTheme.textSecondary, size: 20),
+            suffixIcon: _searching
+                ? const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: SizedBox(width: 16, height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2)),
+                  )
+                : null,
+            filled: true,
+            fillColor: ZuTheme.bgCard,
+            contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: ZuTheme.borderColor),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: ZuTheme.borderColor),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: ZuTheme.accent, width: 1.5),
+            ),
+          ),
+        ),
+
+        // Résultats
+        if (_results.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          ..._results.map((p) {
+            final uid       = p['uid'] as String;
+            final firstName = p['firstName'] as String? ?? '';
+            final lastName  = p['lastName']  as String? ?? '';
+            final level     = p['level']     as int?    ?? 1;
+            final photoUrl  = p['photoUrl']  as String?;
+            final invited   = _invited.contains(uid);
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: ZuCard(
+                child: Row(
+                  children: [
+                    ZuAvatar(
+                      photoUrl: photoUrl,
+                      initials: '${firstName.isNotEmpty ? firstName[0] : '?'}'
+                                '${lastName.isNotEmpty  ? lastName[0]  : ''}',
+                      size: 36,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('$firstName $lastName',
+                            style: Theme.of(context).textTheme.headlineSmall),
+                          Text('Niveau $level',
+                            style: Theme.of(context).textTheme.bodySmall),
+                        ],
+                      ),
+                    ),
+                    if (invited)
+                      ZuTag('Invité ✓', style: ZuTagStyle.green)
+                    else
+                      TextButton(
+                        onPressed: () => _invite(uid),
+                        child: Text('Inviter',
+                          style: GoogleFonts.syne(
+                            fontSize: 13, fontWeight: FontWeight.w700,
+                            color: ZuTheme.accent,
+                          )),
+                      ),
+                  ],
+                ),
+              ),
+            );
+          }),
+        ] else if (_searchCtrl.text.length >= 2 && !_searching) ...[
+          const SizedBox(height: 8),
+          Text('Aucun joueur trouvé pour "${_searchCtrl.text}"',
+            style: Theme.of(context).textTheme.bodySmall),
+        ],
+      ],
+    );
+  }
+}
+
+// ─── Partager le lien du match (joueurs hors-app) ────────────────
+
+class _ShareMatchLinkCard extends StatefulWidget {
+  final ZuMatch match;
+  const _ShareMatchLinkCard({required this.match});
+
+  @override
+  State<_ShareMatchLinkCard> createState() => _ShareMatchLinkCardState();
+}
+
+class _ShareMatchLinkCardState extends State<_ShareMatchLinkCard> {
+  bool _copied = false;
+
+  String get _matchUrl => 'https://zupadel.fr/matches/${widget.match.id}';
+
+  String get _shareText {
+    final m = widget.match;
+    final date = DateFormat('EEE d MMM', 'fr_FR').format(m.startTime);
+    final time = DateFormat('HH:mm').format(m.startTime);
+    return '🎾 Rejoins mon match de padel sur Zupadel !\n\n'
+        '📍 ${m.club}\n'
+        '📅 $date à $time\n'
+        '👥 ${m.availableSlots} place${m.availableSlots > 1 ? 's' : ''} disponible${m.availableSlots > 1 ? 's' : ''}\n\n'
+        '$_matchUrl';
+  }
+
+  void _share() {
+    Share.share(_shareText, subject: 'Match de padel à ${widget.match.club}');
+  }
+
+  void _copyLink() async {
+    await Clipboard.setData(ClipboardData(text: _matchUrl));
+    setState(() => _copied = true);
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _copied = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ZuCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text('🔗', style: TextStyle(fontSize: 18)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Inviter hors de l\'appli',
+                      style: GoogleFonts.syne(
+                        fontSize: 14, fontWeight: FontWeight.w700,
+                        color: ZuTheme.textPrimary,
+                      ),
+                    ),
+                    Text(
+                      'Partage le lien par SMS, WhatsApp, email…',
+                      style: GoogleFonts.dmSans(
+                        fontSize: 12, color: ZuTheme.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          // Affichage du lien
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: ZuTheme.bgPrimary,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: ZuTheme.borderColor),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _matchUrl,
+                    style: GoogleFonts.dmSans(
+                      fontSize: 12, color: ZuTheme.textSecondary,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: _copyLink,
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 200),
+                    child: _copied
+                        ? const Icon(Icons.check, color: ZuTheme.accent, size: 18,
+                            key: ValueKey('check'))
+                        : const Icon(Icons.copy, color: ZuTheme.textSecondary, size: 18,
+                            key: ValueKey('copy')),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: ZuButton(
+              label: 'Partager le lien',
+              onPressed: _share,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

@@ -49,7 +49,7 @@ class _TournamentListScreenState extends ConsumerState<TournamentListScreen> {
         title: const Text('Tournois'),
         actions: [
           TextButton.icon(
-            onPressed: () => context.go('/tournaments/create'),
+            onPressed: () => context.push('/tournaments/create'),
             icon: const Icon(Icons.add, size: 18),
             label: Text('Créer', style: GoogleFonts.syne(fontWeight: FontWeight.w700)),
             style: TextButton.styleFrom(foregroundColor: ZuTheme.accent),
@@ -97,7 +97,7 @@ class _TournamentListScreenState extends ConsumerState<TournamentListScreen> {
                         title: 'Aucun tournoi',
                         subtitle: 'Organise le premier tournoi de ta région !',
                         buttonLabel: 'Créer un tournoi',
-                        onButton: () => context.go('/tournaments/create'),
+                        onButton: () => context.push('/tournaments/create'),
                       )
                     : ListView.builder(
                         padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
@@ -106,9 +106,9 @@ class _TournamentListScreenState extends ConsumerState<TournamentListScreen> {
                           padding: const EdgeInsets.only(bottom: 16),
                           child: ZuTournamentCard(
                             tournament: filtered[i],
-                            onTap: () => context.go('/tournaments/${filtered[i].id}'),
+                            onTap: () => context.push('/tournaments/${filtered[i].id}'),
                             onRegister: filtered[i].isOpen
-                                ? () => context.go('/tournaments/${filtered[i].id}/register')
+                                ? () => context.push('/tournaments/${filtered[i].id}/register')
                                 : null,
                           ),
                         ),
@@ -338,7 +338,7 @@ class TournamentDetailScreen extends ConsumerWidget {
             actions: [
               if (t.isOpen && !isRegistered)
                 TextButton(
-                  onPressed: () => context.go('/tournaments/$tournamentId/register'),
+                  onPressed: () => context.push('/tournaments/$tournamentId/register'),
                   child: Text('S\'inscrire',
                     style: GoogleFonts.syne(fontWeight: FontWeight.w700, color: ZuTheme.accent)),
                 ),
@@ -429,7 +429,7 @@ class TournamentDetailScreen extends ConsumerWidget {
                   label: t.isFree
                       ? 'S\'inscrire gratuitement'
                       : 'Payer ${t.entryFee.toStringAsFixed(0)} € et s\'inscrire',
-                  onPressed: () => context.go('/tournaments/$tournamentId/register'),
+                  onPressed: () => context.push('/tournaments/$tournamentId/register'),
                 ),
             ],
           ),
@@ -471,7 +471,6 @@ class _ProfileEditScreenState extends ConsumerState<ProfileEditScreen> {
   final _lastNameCtrl   = TextEditingController();
   final _cityCtrl       = TextEditingController();
   final _fftLicenseCtrl = TextEditingController();
-  final _fftRankCtrl    = TextEditingController();
   int   _level          = 1;
   bool  _loading        = false;
   bool  _photoLoading   = false;
@@ -483,7 +482,6 @@ class _ProfileEditScreenState extends ConsumerState<ProfileEditScreen> {
     _lastNameCtrl.dispose();
     _cityCtrl.dispose();
     _fftLicenseCtrl.dispose();
-    _fftRankCtrl.dispose();
     super.dispose();
   }
 
@@ -493,7 +491,6 @@ class _ProfileEditScreenState extends ConsumerState<ProfileEditScreen> {
     _lastNameCtrl.text   = user.lastName;
     _cityCtrl.text       = user.city ?? '';
     _fftLicenseCtrl.text = user.fftLicense ?? '';
-    _fftRankCtrl.text    = user.fftRank ?? '';
     _level               = user.level;
     _initialized         = true;
   }
@@ -527,7 +524,6 @@ class _ProfileEditScreenState extends ConsumerState<ProfileEditScreen> {
         level:      _level,
         city:       _cityCtrl.text.trim().isEmpty ? null : _cityCtrl.text.trim(),
         fftLicense: _fftLicenseCtrl.text.trim().isEmpty ? null : _fftLicenseCtrl.text.trim(),
-        fftRank:    _fftRankCtrl.text.trim().isEmpty ? null : _fftRankCtrl.text.trim(),
       );
       if (mounted) {
         context.pop();
@@ -674,14 +670,8 @@ class _ProfileEditScreenState extends ConsumerState<ProfileEditScreen> {
               ),
               const SizedBox(height: 14),
 
-              // Classement FFT
-              TextFormField(
-                controller: _fftRankCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Classement FFT (ex: P25, P100…)',
-                  prefixIcon: Icon(Icons.emoji_events_outlined),
-                ),
-              ),
+              // Classement FFT — lecture seule, synchronisé automatiquement
+              _FftRankTile(user: user),
               const SizedBox(height: 28),
 
               ZuButton(
@@ -766,7 +756,7 @@ class _CoachListScreenState extends ConsumerState<CoachListScreen> {
                       padding: const EdgeInsets.only(bottom: 12),
                       child: ZuCoachCard(
                         coach: c,
-                        onTap: () => context.go('/coaching/${c.id}'),
+                        onTap: () => context.push('/coaching/${c.id}'),
                       ),
                     )),
                     // CTA devenir coach
@@ -790,7 +780,7 @@ class _CoachListScreenState extends ConsumerState<CoachListScreen> {
                           const SizedBox(height: 16),
                           ZuButton(
                             label: 'Créer mon profil coach',
-                            onPressed: () => context.go('/coaching/create-profile'),
+                            onPressed: () => context.push('/coaching/create-profile'),
                           ),
                         ],
                       ),
@@ -816,8 +806,9 @@ class ProfileScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final user  = ref.watch(currentUserProvider).valueOrNull;
-    final stats = ref.watch(userStatsProvider).valueOrNull;
+    final user    = ref.watch(currentUserProvider).valueOrNull;
+    final stats   = ref.watch(userStatsProvider).valueOrNull;
+    final ranking = ref.watch(myRankingProvider).valueOrNull;
 
     return Scaffold(
       backgroundColor: ZuTheme.bgPrimary,
@@ -839,7 +830,7 @@ class ProfileScreen extends ConsumerWidget {
               child: Column(
                 children: [
                   GestureDetector(
-                    onTap: () => context.go('/profile/edit'),
+                    onTap: () => context.push('/profile/edit'),
                     child: Stack(
                       children: [
                         Container(
@@ -877,18 +868,27 @@ class ProfileScreen extends ConsumerWidget {
                   Text(user?.fullName ?? 'Joueur', style: Theme.of(context).textTheme.displayMedium),
                   const SizedBox(height: 4),
                   Text(
-                    'Niveau ${user?.level ?? 1}${user?.city != null ? ' · ${user!.city}' : ''}${user?.fftRank != null ? ' · FFT ${user!.fftRank}' : ''}',
+                    'Niveau ${user?.level ?? 1}${user?.city != null ? ' · ${user!.city}' : ''}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   const SizedBox(height: 16),
                   ZuCreditChip(
                     credits: user?.credits ?? 0,
-                    onTap: () => context.go('/credits'),
+                    onTap: () => context.push('/credits'),
                   ),
                 ],
               ),
             ),
           ),
+
+          // ELO + position
+          if (ranking != null && ranking.matchesPlayed > 0)
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+              sliver: SliverToBoxAdapter(
+                child: _EloRankCard(ranking: ranking),
+              ),
+            ),
 
           // Stats grid
           SliverPadding(
@@ -953,7 +953,7 @@ class ProfileScreen extends ConsumerWidget {
                       icon: '⬡',
                       label: 'Crédits & transactions',
                       trailing: ZuCreditChip(credits: user?.credits ?? 0),
-                      onTap: () => context.go('/credits'),
+                      onTap: () => context.push('/credits'),
                     ),
                     const Divider(height: 1),
                     _MenuRow(
@@ -970,28 +970,30 @@ class ProfileScreen extends ConsumerWidget {
                     _MenuRow(
                       icon: '📊',
                       label: 'Partager mes stats',
-                      onTap: () => context.go('/profile/share-stats'),
+                      onTap: () => context.push('/profile/share-stats'),
                     ),
                     const Divider(height: 1),
                     _MenuRow(
                       icon: '🏅',
-                      label: 'Licence FFT',
-                      trailing: user?.fftLicense != null
-                          ? ZuTag('Enregistrée', style: ZuTagStyle.green)
-                          : ZuTag('Ajouter', style: ZuTagStyle.neutral),
-                      onTap: () => context.go('/profile/edit'),
+                      label: 'Classement FFT Padel',
+                      trailing: user?.fftRank != null
+                          ? ZuTag('#${user!.fftRank!}', style: ZuTagStyle.green)
+                          : user?.fftLicense != null
+                              ? ZuTag('En attente de synchro', style: ZuTagStyle.neutral)
+                              : ZuTag('Ajouter ma licence', style: ZuTagStyle.neutral),
+                      onTap: () => context.push('/profile/edit'),
                     ),
                     const Divider(height: 1),
                     _MenuRow(
                       icon: '🔔',
                       label: 'Notifications',
-                      onTap: () => context.go('/settings/notifications'),
+                      onTap: () => context.push('/settings/notifications'),
                     ),
                     const Divider(height: 1),
                     _MenuRow(
                       icon: '⚙️',
                       label: 'Paramètres',
-                      onTap: () => context.go('/settings'),
+                      onTap: () => context.push('/settings'),
                     ),
                   ],
                 ),
@@ -1010,6 +1012,184 @@ class ProfileScreen extends ConsumerWidget {
       subject: 'Code parrainage Zupadel',
     );
   }
+}
+
+// ── ELO + position card ─────────────────────────────────────────
+
+class _EloRankCard extends StatelessWidget {
+  final ZuRanking ranking;
+  const _EloRankCard({required this.ranking});
+
+  void _showInfo(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: ZuTheme.bgSurface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => const _RankingInfoSheetSimple(),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => ZuCard(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text('Mon classement',
+              style: GoogleFonts.syne(fontSize: 13, fontWeight: FontWeight.w700,
+                color: ZuTheme.textPrimary)),
+            GestureDetector(
+              onTap: () => _showInfo(context),
+              child: const Icon(Icons.info_outline_rounded, size: 18,
+                color: ZuTheme.textSecondary),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+        Expanded(
+          child: _EloStat(
+            value: '${ranking.eloRating}',
+            label: 'ELO',
+            color: ZuTheme.accent,
+          ),
+        ),
+        Container(width: 1, height: 40, color: ZuTheme.borderColor),
+        Expanded(
+          child: _EloStat(
+            value: '#${ranking.rankPosition}',
+            label: 'Classement mondial',
+            color: ZuTheme.textPrimary,
+          ),
+        ),
+        Container(width: 1, height: 40, color: ZuTheme.borderColor),
+        Expanded(
+          child: _EloStat(
+            value: '${ranking.rankingPoints}',
+            label: 'Points ligue',
+            color: Colors.amber,
+          ),
+        ),
+        if (ranking.currentStreak >= 3) ...[
+          Container(width: 1, height: 40, color: ZuTheme.borderColor),
+          Expanded(
+            child: _EloStat(
+              value: '🔥 ${ranking.currentStreak}',
+              label: 'Série',
+              color: Colors.orange,
+              isEmoji: true,
+            ),
+          ),
+        ],
+      ],
+        ),
+      ],
+    ),
+  );
+}
+
+class _EloStat extends StatelessWidget {
+  final String value;
+  final String label;
+  final Color color;
+  final bool isEmoji;
+  const _EloStat({required this.value, required this.label,
+    required this.color, this.isEmoji = false});
+
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      Text(value, style: isEmoji
+          ? const TextStyle(fontSize: 18)
+          : GoogleFonts.syne(fontSize: 17, fontWeight: FontWeight.w800, color: color)),
+      const SizedBox(height: 2),
+      Text(label, textAlign: TextAlign.center,
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+          color: ZuTheme.textSecondary, fontSize: 10)),
+    ],
+  );
+}
+
+// ── Fiche info classement (version compacte pour le profil) ─────
+
+class _RankingInfoSheetSimple extends StatelessWidget {
+  const _RankingInfoSheetSimple();
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(
+        20, 12, 20, MediaQuery.of(context).padding.bottom + 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 36, height: 4,
+              margin: const EdgeInsets.only(bottom: 20),
+              decoration: BoxDecoration(
+                color: ZuTheme.borderColor,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          Text('Comment est calculé ton classement ?',
+            style: GoogleFonts.syne(fontSize: 16, fontWeight: FontWeight.w800,
+              color: ZuTheme.textPrimary)),
+          const SizedBox(height: 16),
+          _InfoRow(emoji: '⚡', title: 'ELO',
+            body: 'Démarre à 1 200. Chaque victoire ou défaite '
+                'ajuste tes points selon le niveau de tes adversaires. '
+                'Battre plus fort = gagner plus.'),
+          const SizedBox(height: 12),
+          _InfoRow(emoji: '🏆', title: 'Points ligue',
+            body: 'Victoire compétitive +10 · Victoire loisir +5 · '
+                'Défaite +2. Remis à zéro chaque lundi.'),
+          const SizedBox(height: 12),
+          _InfoRow(emoji: '🔥', title: 'Série',
+            body: 'Nombre de victoires consécutives. '
+                'La flamme apparaît à partir de 3 d\'affilée.'),
+          const SizedBox(height: 12),
+          _InfoRow(emoji: '🎾', title: 'Important',
+            body: 'Seuls les matchs avec un score saisi comptent '
+                'pour l\'ELO et les points.'),
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoRow extends StatelessWidget {
+  final String emoji;
+  final String title;
+  final String body;
+  const _InfoRow({required this.emoji, required this.title, required this.body});
+
+  @override
+  Widget build(BuildContext context) => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(emoji, style: const TextStyle(fontSize: 20)),
+      const SizedBox(width: 10),
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: GoogleFonts.syne(fontSize: 12,
+              fontWeight: FontWeight.w700, color: ZuTheme.textPrimary)),
+            const SizedBox(height: 2),
+            Text(body, style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: ZuTheme.textSecondary, height: 1.5)),
+          ],
+        ),
+      ),
+    ],
+  );
 }
 
 // ── Stats grid ──────────────────────────────────────────────────
@@ -1533,6 +1713,72 @@ class _Chip extends StatelessWidget {
   );
 }
 
+class _FftRankTile extends StatelessWidget {
+  final ZuUser user;
+  const _FftRankTile({required this.user});
+
+  @override
+  Widget build(BuildContext context) {
+    final rank      = user.fftRank;
+    final updatedAt = user.fftRankUpdatedAt;
+    final syncLabel = updatedAt != null
+        ? 'Synchro le ${updatedAt.day.toString().padLeft(2, '0')}/${updatedAt.month.toString().padLeft(2, '0')}/${updatedAt.year}'
+        : 'Synchro automatique chaque jour à 6h';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      decoration: BoxDecoration(
+        color: ZuTheme.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: ZuTheme.borderColor),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.emoji_events_outlined, size: 20, color: ZuTheme.textSecondary),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Classement national FFT Padel',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: ZuTheme.textSecondary)),
+                const SizedBox(height: 4),
+                rank != null
+                    ? RichText(text: TextSpan(children: [
+                        TextSpan(
+                          text: rank,
+                          style: GoogleFonts.syne(fontSize: 18,
+                              fontWeight: FontWeight.w800, color: ZuTheme.accent),
+                        ),
+                        TextSpan(
+                          text: 'ème au classement FFT',
+                          style: GoogleFonts.dmSans(fontSize: 12,
+                              color: ZuTheme.textSecondary),
+                        ),
+                      ]))
+                    : Text('Non renseigné',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: ZuTheme.textSecondary)),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    const Icon(Icons.sync_rounded, size: 12, color: ZuTheme.accent),
+                    const SizedBox(width: 4),
+                    Text(syncLabel,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: ZuTheme.accent, fontSize: 11)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _FormField extends StatelessWidget {
   final String label;
   final String value;
@@ -1775,10 +2021,18 @@ class _StatsCard extends StatelessWidget {
                                 ),
                                 if (user?.fftRank != null) ...[
                                   const SizedBox(width: 6),
-                                  Text(
-                                    user!.fftRank!,
-                                    style: GoogleFonts.dmSans(
-                                      fontSize: 10, color: ZuTheme.textSecondary,
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: ZuTheme.accent.withOpacity(0.12),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      '#${user!.fftRank!} FFT',
+                                      style: GoogleFonts.syne(
+                                        fontSize: 9, fontWeight: FontWeight.w700,
+                                        color: ZuTheme.accent,
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -2211,6 +2465,8 @@ class _NotificationSettingsScreenState
   bool _matchFinished  = true;
   bool _tournaments    = true;
   bool _coaching       = true;
+  bool _messages       = true;
+  bool _courtBooking   = true;
   bool _loaded         = false;
   bool _saving         = false;
 
@@ -2235,6 +2491,8 @@ class _NotificationSettingsScreenState
         _matchFinished  = prefs['matchFinished']  as bool? ?? true;
         _tournaments    = prefs['tournaments']    as bool? ?? true;
         _coaching       = prefs['coaching']       as bool? ?? true;
+        _messages       = prefs['messages']       as bool? ?? true;
+        _courtBooking   = prefs['courtBooking']   as bool? ?? true;
         _loaded         = true;
       });
     } else if (mounted) {
@@ -2254,6 +2512,8 @@ class _NotificationSettingsScreenState
         'matchFinished':  _matchFinished,
         'tournaments':    _tournaments,
         'coaching':       _coaching,
+        'messages':       _messages,
+        'courtBooking':   _courtBooking,
       },
     });
     if (mounted) setState(() => _saving = false);
@@ -2297,6 +2557,10 @@ class _NotificationSettingsScreenState
                           (v) => setState(() => _toggle(v, (x) => _tournaments = x))),
                       _NotifRow('Coaching', _coaching,
                           (v) => setState(() => _toggle(v, (x) => _coaching = x))),
+                      _NotifRow('Messages', _messages,
+                          (v) => setState(() => _toggle(v, (x) => _messages = x))),
+                      _NotifRow('Réservation terrain', _courtBooking,
+                          (v) => setState(() => _toggle(v, (x) => _courtBooking = x))),
                     ],
                   ),
                 ),
@@ -2341,7 +2605,7 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
-  int _defaultDispoHours = 3;
+  int _defaultDispoHours = 24;
   bool _changingPassword  = false;
   final _emailCtrl        = TextEditingController();
   final _pwCtrl           = TextEditingController();
@@ -2378,15 +2642,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Quand tu actives "Je suis disponible", combien de temps rester visible ?',
+                  'Quand tu actives "Je suis disponible", combien de temps rester visible ? (max 48h)',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
                 const SizedBox(height: 12),
                 SegmentedButton<int>(
                   segments: const [
-                    ButtonSegment(value: 1,  label: Text('1h')),
-                    ButtonSegment(value: 3,  label: Text('3h')),
-                    ButtonSegment(value: 8,  label: Text('8h')),
+                    ButtonSegment(value: 12, label: Text('12h')),
+                    ButtonSegment(value: 24, label: Text('1j')),
+                    ButtonSegment(value: 48, label: Text('2j')),
                   ],
                   selected: {_defaultDispoHours},
                   onSelectionChanged: (s) => setState(() => _defaultDispoHours = s.first),
@@ -3211,7 +3475,7 @@ class _BookSlotScreenState extends ConsumerState<BookSlotScreen> {
         priceCredits:    widget.club.pricePerSlotCredits,
       );
       if (mounted) {
-        context.go('/clubs/${widget.clubId}/reservations/$resId');
+        context.pushReplacement('/clubs/${widget.clubId}/reservations/$resId');
       }
     } on FirebaseFunctionsException catch (e) {
       if (mounted) {
@@ -3404,7 +3668,7 @@ class ReservationConfirmScreen extends ConsumerWidget {
               ZuButton(
                 label: 'Créer un match sur ce créneau',
                 outlined: true,
-                onPressed: () => context.go(
+                onPressed: () => context.push(
                   '/matches/create',
                   extra: {'reservationId': res.id, 'club': res.clubName},
                 ),

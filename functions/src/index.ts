@@ -126,6 +126,7 @@ export const stripeWebhook = onRequest(
         await sendNotification(firebaseUid, {
           title: "Inscription confirmée ! 🏆",
           body:  "Ton paiement est validé. Bonne chance au tournoi !",
+          type:  "tournaments",
           data:  {tournamentId},
         });
       } else if (firebaseUid && credits) {
@@ -169,6 +170,7 @@ export const stripeWebhook = onRequest(
         await sendNotification(firebaseUid, {
           title: "Abonnement coach actif ! 🏋️",
           body:  "Ton profil coach est visible jusqu'au " + nextMonth.toLocaleDateString("fr-FR"),
+          type:  "coaching",
         });
       }
     }
@@ -417,6 +419,7 @@ export const autoAcceptPlayers = onSchedule(
         await sendNotification(uid, {
           title: "Demande acceptée ! 🎾",
           body: `Tu es accepté dans le match à ${match.club}`,
+          type: "matchAccepted",
         });
       }
       await batch.commit();
@@ -461,6 +464,7 @@ export const onMatchCreated = onDocumentCreated(
       await sendNotification(doc.id, {
         title: "Nouveau match près de toi ! 🎾",
         body:  `${match.club} · Niveau ${match.levelMin}-${match.levelMax}`,
+        type:  "matchInvites",
         data:  {matchId},
       });
       notifiedCount++;
@@ -485,7 +489,7 @@ export const setUserAvailability = onCall(
     const uid = req.auth?.uid;
     if (!uid) throw new HttpsError("unauthenticated", "Login required");
 
-    const {available, hours = 3} = req.data as {available: boolean; hours?: number};
+    const {available, hours = 24} = req.data as {available: boolean; hours?: number};
     const db = getDb();
 
     const expiresAt = new Date(Date.now() + hours * 3600 * 1000);
@@ -613,7 +617,8 @@ export const invitePlayerToMatch = onCall(
     await sendNotification(invitedUid, {
       title: "Tu as été invité ! 🎾",
       body:  `${firstName} t'invite à rejoindre un match à ${match.club}`,
-      data:  {matchId, type: "invitation"},
+      type:  "matchInvites",
+      data:  {matchId, action: "invitation"},
     });
 
     return {success: true};
@@ -659,6 +664,7 @@ export const onMatchCancelled = onDocumentUpdated(
       await sendNotification(uid, {
         title: "Match annulé 😔",
         body: `Le match à ${after.club} a été annulé. 1 crédit remboursé.`,
+        type: "matchCancelled",
       });
     }
     await batch.commit();
@@ -678,6 +684,7 @@ export const onMatchFinished = onDocumentUpdated(
       sendNotification(uid, {
         title: "Match terminé ! Laisse un avis 🌟",
         body: `+1 crédit offert pour ton avis sur le match à ${after.club}`,
+        type: "matchReview",
         data: {matchId: event.params.matchId},
       })
     );
@@ -699,28 +706,228 @@ export const onTournamentStatusChanged = onDocumentUpdated(
       body: isApproved
         ? `Ton tournoi "${after.title}" est maintenant visible.`
         : `Ton tournoi "${after.title}" n'a pas été approuvé.`,
+      type: "tournaments",
     });
   }
 );
 
+// ── Helpers ELO ──────────────────────────────────────────────────
+
+/**
+ * Calcule le nouvel ELO après un match.
+ * Pour un match en équipe, on passe l'ELO moyen de l'équipe adverse.
+ */
+function newElo(myElo: number, opponentAvgElo: number, won: boolean, k = 32): number {
+  const expected = 1 / (1 + Math.pow(10, (opponentAvgElo - myElo) / 400));
+  const actual   = won ? 1 : 0;
+  return Math.round(myElo + k * (actual - expected));
+}
+
+/**
+ * Parse un score "6-3 7-5" ou "6-3 / 7-5" → [[6,3],[7,5]]
+ */
+function parseSets(score: string): [number, number][] {
+  return score.split(/[\s/]+/).map((s) => {
+    const parts = s.split("-").map(Number);
+    return [parts[0] || 0, parts[1] || 0] as [number, number];
+  });
+}
+
+/**
+ * Compte les sets gagnés pour chaque équipe à partir des sets parsés.
+ * L'équipe 1 joue avec les scores à gauche (team1Score-team2Score).
+ */
+function countSetsWon(sets: [number, number][]): [number, number] {
+  let t1 = 0; let t2 = 0;
+  for (const [a, b] of sets) {
+    if (a > b) t1++; else if (b > a) t2++;
+  }
+  return [t1, t2];
+}
+
 export const updateStatsOnMatchFinish = onDocumentUpdated(
   {document: "matches/{matchId}", region: "europe-west3"},
   async (event) => {
-    const db = getDb();
+    const db     = getDb();
     const before = event.data?.before.data();
     const after  = event.data?.after.data();
     if (!before || !after) return;
     if (before.status === after.status) return;
     if (after.status !== "finished") return;
     if (!after.score) return;
-    const playerIds: string[] = after.playerIds || [];
-    for (const uid of playerIds) {
-      const statsRef = db.collection("userStats").doc(uid);
-      await statsRef.set({
-        matchesPlayed: admin.firestore.FieldValue.increment(1),
-        minutesPlayed: admin.firestore.FieldValue.increment(after.durationMinutes || 90),
-      }, {merge: true});
+
+    const matchType: string  = after.type || "leisure";
+    const duration: number   = after.durationMinutes || 90;
+    const winnerTeam: number = after.winnerTeam || 1;
+    const team1Ids: string[] = after.team1Ids || [];
+    const team2Ids: string[] = after.team2Ids || [];
+    const allIds             = [...team1Ids, ...team2Ids];
+    if (allIds.length === 0) return;
+
+    // Points selon le type de match
+    const winPoints  = matchType === "competitive" ? 10 : 5;
+    const lossPoints = 2;
+
+    // Parser le score
+    const sets          = parseSets(after.score as string);
+    const [t1Sets, t2Sets] = countSetsWon(sets);
+    const setsForTeam   = (teamIdx: 1 | 2) => teamIdx === 1 ? [t1Sets, t2Sets] : [t2Sets, t1Sets];
+
+    // Récupérer les ELO actuels de tous les joueurs
+    const statsSnaps = await Promise.all(allIds.map((uid) => db.collection("userStats").doc(uid).get()));
+    const eloMap: Record<string, number> = {};
+    for (const snap of statsSnaps) {
+      eloMap[snap.id] = (snap.data()?.eloRating as number | undefined) ?? 1200;
     }
+
+    const team1AvgElo = team1Ids.length
+      ? team1Ids.reduce((s, uid) => s + eloMap[uid], 0) / team1Ids.length
+      : 1200;
+    const team2AvgElo = team2Ids.length
+      ? team2Ids.reduce((s, uid) => s + eloMap[uid], 0) / team2Ids.length
+      : 1200;
+
+    // Récupérer les niveaux moyens des adversaires pour avgOpponentLevel
+    const userSnaps = await Promise.all(allIds.map((uid) => db.collection("users").doc(uid).get()));
+    const levelMap: Record<string, number> = {};
+    for (const snap of userSnaps) {
+      levelMap[snap.id] = (snap.data()?.level as number | undefined) ?? 1;
+    }
+    const team1AvgLevel = team1Ids.length
+      ? team1Ids.reduce((s, uid) => s + (levelMap[uid] || 1), 0) / team1Ids.length : 1;
+    const team2AvgLevel = team2Ids.length
+      ? team2Ids.reduce((s, uid) => s + (levelMap[uid] || 1), 0) / team2Ids.length : 1;
+
+    const batch = db.batch();
+
+    const processTeam = async (teamIds: string[], teamIdx: 1 | 2) => {
+      const won       = winnerTeam === teamIdx;
+      const oppAvgElo = teamIdx === 1 ? team2AvgElo : team1AvgElo;
+      const oppAvgLvl = teamIdx === 1 ? team2AvgLevel : team1AvgLevel;
+      const [mySets, oppSets] = setsForTeam(teamIdx);
+
+      for (const uid of teamIds) {
+        const myElo   = eloMap[uid] ?? 1200;
+        const newEloV = newElo(myElo, oppAvgElo, won);
+        const pts     = won ? winPoints : lossPoints;
+
+        // Calcul de la nouvelle moyenne de niveau adversaire (rolling average)
+        const curSnap  = statsSnaps.find((s) => s.id === uid);
+        const curData  = curSnap?.data() ?? {};
+        const curPlayed  = (curData.matchesPlayed as number | undefined) ?? 0;
+        const curAvgOpp  = (curData.avgOpponentLevel as number | undefined) ?? 0;
+        const newAvgOpp  = curPlayed === 0
+          ? oppAvgLvl
+          : (curAvgOpp * curPlayed + oppAvgLvl) / (curPlayed + 1);
+
+        const curStreak = (curData.currentStreak as number | undefined) ?? 0;
+        const curBest   = (curData.bestStreak as number | undefined) ?? 0;
+        const newStreak = won ? curStreak + 1 : 0;
+        const newBest   = Math.max(curBest, newStreak);
+
+        const statsRef = db.collection("userStats").doc(uid);
+        batch.set(statsRef, {
+          matchesPlayed:    admin.firestore.FieldValue.increment(1),
+          matchesWon:       admin.firestore.FieldValue.increment(won ? 1 : 0),
+          matchesLost:      admin.firestore.FieldValue.increment(won ? 0 : 1),
+          minutesPlayed:    admin.firestore.FieldValue.increment(duration),
+          setsWon:          admin.firestore.FieldValue.increment(mySets),
+          setsLost:         admin.firestore.FieldValue.increment(oppSets),
+          avgOpponentLevel: newAvgOpp,
+          eloRating:        newEloV,
+          rankingPoints:    admin.firestore.FieldValue.increment(pts),
+          weeklyPoints:     admin.firestore.FieldValue.increment(pts),
+          currentStreak:    newStreak,
+          bestStreak:       newBest,
+        }, {merge: true});
+
+        // Mise à jour du ranking public
+        const rankingRef = db.collection("rankings").doc(uid);
+        const userData   = userSnaps.find((s) => s.id === uid)?.data() ?? {};
+        const newPlayed  = curPlayed + 1;
+        const newWon     = ((curData.matchesWon as number | undefined) ?? 0) + (won ? 1 : 0);
+        batch.set(rankingRef, {
+          uid,
+          firstName:     userData.firstName ?? "",
+          lastName:      userData.lastName ?? "",
+          photoUrl:      userData.photoUrl ?? null,
+          level:         userData.level ?? 1,
+          city:          userData.city ?? null,
+          fftRank:       userData.fftRank ?? null,
+          location:      userData.lastKnownLocation ?? null,
+          eloRating:     newEloV,
+          rankingPoints: admin.firestore.FieldValue.increment(pts),
+          weeklyPoints:  admin.firestore.FieldValue.increment(pts),
+          matchesPlayed: newPlayed,
+          matchesWon:    newWon,
+          winRate:       newPlayed > 0 ? newWon / newPlayed : 0,
+          currentStreak: newStreak,
+          bestStreak:    newBest,
+          updatedAt:     admin.firestore.FieldValue.serverTimestamp(),
+        }, {merge: true});
+      }
+    };
+
+    await processTeam(team1Ids, 1);
+    await processTeam(team2Ids, 2);
+    await batch.commit();
+
+    console.log(`Stats + ELO mis à jour pour le match ${event.params.matchId}`);
+  }
+);
+
+// ── Calcul des positions dans le classement (quotidien) ──────────
+
+export const computeRankPositions = onSchedule(
+  {schedule: "30 6 * * *", timeZone: "Europe/Paris", region: "europe-west3"},
+  async () => {
+    const db   = getDb();
+    const snap = await db.collection("rankings").orderBy("eloRating", "desc").get();
+
+    const batchSize = 400;
+    let batch       = db.batch();
+    let count       = 0;
+
+    for (let i = 0; i < snap.docs.length; i++) {
+      batch.update(snap.docs[i].ref, {rankPosition: i + 1});
+      count++;
+      if (count >= batchSize) {
+        await batch.commit();
+        batch = db.batch();
+        count = 0;
+      }
+    }
+    if (count > 0) await batch.commit();
+
+    console.log(`Positions classement recalculées pour ${snap.size} joueurs`);
+  }
+);
+
+// ── Reset hebdomadaire des weeklyPoints (chaque lundi 00h01) ─────
+
+export const resetWeeklyPoints = onSchedule(
+  {schedule: "1 0 * * 1", timeZone: "Europe/Paris", region: "europe-west3"},
+  async () => {
+    const db   = getDb();
+    const snap = await db.collection("rankings").get();
+
+    const batchSize = 400;
+    let batch       = db.batch();
+    let count       = 0;
+
+    for (const doc of snap.docs) {
+      batch.update(doc.ref, {weeklyPoints: 0});
+      db.collection("userStats").doc(doc.id);
+      batch.update(db.collection("userStats").doc(doc.id), {weeklyPoints: 0});
+      count += 2;
+      if (count >= batchSize) {
+        await batch.commit();
+        batch = db.batch();
+        count = 0;
+      }
+    }
+    if (count > 0) await batch.commit();
+    console.log(`weeklyPoints remis à zéro pour ${snap.size} joueurs`);
   }
 );
 
@@ -1070,6 +1277,7 @@ export const bookCourtSlot = onCall(
     await sendNotification(uid, {
       title: "Terrain réservé ! 🎾",
       body:  `${courtName} @ ${clubName} — ${new Date(startTime).toLocaleTimeString("fr-FR", {hour: "2-digit", minute: "2-digit"})}`,
+      type:  "courtBooking",
     });
 
     return {reservationId};
@@ -1091,6 +1299,7 @@ export const notifyPlayerAccepted = onCall(
     await sendNotification(playerId, {
       title: "Demande acceptée ! 🎾",
       body: `Tu es accepté dans le match à ${club}`,
+      type: "matchAccepted",
       data: {matchId},
     });
     return {success: true};
@@ -1108,6 +1317,7 @@ export const notifyPlayerRefused = onCall(
     await sendNotification(playerId, {
       title: "Demande refusée",
       body: `Ta demande pour le match à ${club} a été refusée. 1 crédit remboursé.`,
+      type: "matchAccepted",
       data: {matchId},
     });
     return {success: true};
@@ -1175,19 +1385,159 @@ async function verifyGooglePurchase(productId: string, purchaseToken: string): P
   }
 }
 
+// ══════════════════════════════════════════════
+//  SYNCHRONISATION CLASSEMENTS FFT
+// ══════════════════════════════════════════════
+
+/**
+ * Appelle l'API FFT pour récupérer le classement padel numérique d'un licencié.
+ * Retourne le rang national (ex: "1 542") ou null si indisponible.
+ */
+async function fetchFftRanking(licence: string): Promise<string | null> {
+  const url = `https://www.fft.fr/backend/api/classements/search?licence=${encodeURIComponent(licence)}`;
+  const res = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "Zupadel/1.0 (contact@zupadel.fr)",
+    },
+  });
+  if (!res.ok) return null;
+  const data = await res.json() as Record<string, unknown>;
+
+  // Chercher le rang numérique national en priorité
+  const position =
+    data?.rangNational ??
+    data?.rang ??
+    data?.position ??
+    data?.classementNational ??
+    data?.rankPadel ??
+    data?.rank;
+
+  if (position != null) {
+    // Formater en nombre français avec espace comme séparateur de milliers (1 542)
+    const num = Number(position);
+    if (!isNaN(num) && num > 0) {
+      return num.toLocaleString("fr-FR");
+    }
+  }
+
+  // Fallback : série (P100, P250…) si pas de rang numérique disponible
+  const serie =
+    data?.classementPadel ??
+    data?.seriePadel ??
+    data?.classementSimple ??
+    data?.classement;
+
+  return serie != null ? String(serie) : null;
+}
+
+/**
+ * Tâche planifiée : met à jour le classement FFT de tous les joueurs
+ * ayant une licence FFT enregistrée. S'exécute chaque jour à 6h (Paris).
+ */
+export const syncFftRankings = onSchedule(
+  {schedule: "0 6 * * *", timeZone: "Europe/Paris", region: "europe-west3"},
+  async () => {
+    const db = getDb();
+    const snap = await db.collection("users")
+      .where("fftLicense", "!=", null)
+      .get();
+
+    let updated = 0;
+    let failed  = 0;
+
+    for (const docSnap of snap.docs) {
+      const licence = docSnap.data().fftLicense as string | undefined;
+      if (!licence) continue;
+
+      // Pause 300ms entre chaque appel pour ne pas surcharger l'API FFT
+      await new Promise((r) => setTimeout(r, 300));
+
+      try {
+        const rank = await fetchFftRanking(licence);
+        if (rank) {
+          await docSnap.ref.update({
+            fftRank: rank,
+            fftRankUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          updated++;
+        }
+      } catch (e) {
+        console.warn(`FFT sync échoué pour ${docSnap.id} (licence ${licence}):`, e);
+        failed++;
+      }
+    }
+
+    console.log(`FFT rankings sync terminé : ${updated} mis à jour, ${failed} erreurs, ${snap.size} total`);
+  }
+);
+
+// ══════════════════════════════════════════════
+//  NOTIFICATIONS MESSAGES (trigger Firestore)
+// ══════════════════════════════════════════════
+
+export const onNewMessage = onDocumentCreated(
+  {document: "conversations/{convId}/messages/{msgId}", region: "europe-west3"},
+  async (event) => {
+    const data = event.data?.data();
+    if (!data || data.type === "system") return;
+
+    const db       = getDb();
+    const convId   = event.params.convId;
+    const senderId = data.senderId as string;
+    const text     = (data.text as string | undefined) ?? "";
+
+    const convDoc = await db.collection("conversations").doc(convId).get();
+    if (!convDoc.exists) return;
+
+    const participantIds = (convDoc.data()?.participantIds as string[]) ?? [];
+    const matchClub      = convDoc.data()?.matchClub as string | undefined;
+
+    const senderDoc = await db.collection("users").doc(senderId).get();
+    const firstName = (senderDoc.data()?.firstName as string | undefined) ?? "Quelqu'un";
+
+    const title = matchClub ? `${firstName} · ${matchClub}` : firstName;
+    const body  = text.length > 100 ? `${text.substring(0, 97)}…` : text;
+
+    await Promise.all(
+      participantIds
+        .filter((uid) => uid !== senderId)
+        .map((uid) => sendNotification(uid, {
+          title,
+          body,
+          type: "messages",
+          data: {convId, senderId},
+        }))
+    );
+  }
+);
+
+// ── Helper notifications (respecte les préférences utilisateur) ───
+
 async function sendNotification(
   uid: string,
-  payload: {title: string; body: string; data?: Record<string, string>}
+  payload: {title: string; body: string; data?: Record<string, string>; type?: string}
 ) {
   const db = getDb();
   try {
     const userDoc  = await db.collection("users").doc(uid).get();
-    const fcmToken = userDoc.data()?.fcmToken as string | undefined;
+    const userData = userDoc.data();
+    const fcmToken = userData?.fcmToken as string | undefined;
     if (!fcmToken) return;
+
+    // Vérifier les préférences de l'utilisateur
+    if (payload.type) {
+      const prefs = userData?.notifPrefs as Record<string, boolean> | undefined;
+      if (prefs && prefs[payload.type] === false) {
+        console.log(`Notif '${payload.type}' désactivée pour ${uid} — ignorée`);
+        return;
+      }
+    }
+
     await admin.messaging().send({
       token: fcmToken,
       notification: {title: payload.title, body: payload.body},
-      data: payload.data || {},
+      data: payload.data ?? {},
     });
   } catch (e) {
     console.error(`Erreur notification pour ${uid}:`, e);

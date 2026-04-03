@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,7 +10,9 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import '../models/models.dart';
 
 // ══════════════════════════════════════════════
@@ -32,6 +35,41 @@ class AuthService {
 
   Future<void> sendPasswordReset(String email) =>
       _auth.sendPasswordResetEmail(email: email);
+
+  Future<UserCredential?> signInWithGoogle() async {
+    if (kIsWeb) {
+      final provider = GoogleAuthProvider();
+      return await _auth.signInWithPopup(provider);
+    }
+    final googleUser = await GoogleSignIn().signIn();
+    if (googleUser == null) return null; // annulé par l'utilisateur
+    final googleAuth = await googleUser.authentication;
+    final credential = GoogleAuthProvider.credential(
+      accessToken: googleAuth.accessToken,
+      idToken:     googleAuth.idToken,
+    );
+    return await _auth.signInWithCredential(credential);
+  }
+
+  /// Sign in with Apple — disponible sur iOS 13+, macOS 10.15+, web.
+  /// À appeler uniquement sur les plateformes supportées.
+  Future<UserCredential?> signInWithApple() async {
+    final appleCredential = await SignInWithApple.getAppleIDCredential(
+      scopes: [
+        AppleIDAuthorizationScopes.email,
+        AppleIDAuthorizationScopes.fullName,
+      ],
+    );
+    final oauthCredential = OAuthProvider('apple.com').credential(
+      idToken:     appleCredential.identityToken,
+      accessToken: appleCredential.authorizationCode,
+    );
+    return await _auth.signInWithCredential(oauthCredential);
+  }
+
+  /// Vérifie si Apple Sign-In est disponible sur la plateforme courante.
+  static bool get isAppleSignInAvailable =>
+      kIsWeb || (!kIsWeb && (Platform.isIOS || Platform.isMacOS));
 }
 
 final authServiceProvider = Provider<AuthService>((ref) => AuthService());
@@ -62,6 +100,7 @@ class UserService {
     required String firstName,
     required String lastName,
     String? referralCode,
+    String? photoUrl,
   }) async {
     final code = _generateCode(firstName);
     final batch = _db.batch();
@@ -71,6 +110,7 @@ class UserService {
       'firstName':     firstName,
       'lastName':      lastName,
       'email':         email,
+      'photoUrl':      photoUrl,
       'level':         1,
       'credits':       10, // C1 : crédits offerts à l'inscription
       'referralCode':  code,
@@ -371,7 +411,13 @@ class MatchService {
     final losers   = winnerTeam == 1 ? team2 : team1;
 
     final batch = _db.batch();
-    batch.update(matchRef, {'status': MatchStatus.finished.name, 'score': score});
+    batch.update(matchRef, {
+      'status':     MatchStatus.finished.name,
+      'score':      score,
+      'team1Ids':   team1,
+      'team2Ids':   team2,
+      'winnerTeam': winnerTeam,
+    });
 
     // Distribution des paris
     final winBettors  = winners.where((id) => match.bettorIds.contains(id)).toList();
@@ -971,7 +1017,7 @@ class MatchmakingService {
   /// Récupère la position GPS actuelle si disponible.
   Future<void> setAvailability({
     required bool available,
-    int hours = 3,
+    int hours = 24,
   }) async {
     final expiresAt = DateTime.now().add(Duration(hours: hours));
 
@@ -1132,6 +1178,35 @@ class MatchmakingService {
     await FirebaseFunctions.instanceFor(region: 'europe-west3')
         .httpsCallable('invitePlayerToMatch')
         .call({'matchId': matchId, 'invitedUid': invitedUid});
+  }
+
+  /// Recherche des joueurs par prénom (prefix search, max 20 résultats).
+  /// Exclut les UIDs passés en paramètre (ex: déjà dans le match).
+  Future<List<Map<String, dynamic>>> searchPlayers(
+    String query, {
+    List<String> excludeUids = const [],
+  }) async {
+    if (query.trim().isEmpty) return [];
+    final db = FirebaseFirestore.instance;
+    final q  = query.trim();
+    final end = q.substring(0, q.length - 1) +
+        String.fromCharCode(q.codeUnitAt(q.length - 1) + 1);
+    final snap = await db.collection('users')
+        .orderBy('firstName')
+        .startAt([q])
+        .endBefore([end])
+        .limit(20)
+        .get();
+    return snap.docs
+        .where((d) => !excludeUids.contains(d.id))
+        .map((d) => {
+          'uid':       d.id,
+          'firstName': d.data()['firstName'] as String? ?? '',
+          'lastName':  d.data()['lastName']  as String? ?? '',
+          'level':     d.data()['level']     as int?    ?? 1,
+          'photoUrl':  d.data()['photoUrl']  as String?,
+        })
+        .toList();
   }
 }
 
@@ -1380,3 +1455,107 @@ final userStatsProvider = StreamProvider<UserStats?>((ref) {
       .snapshots()
       .map((d) => d.exists ? UserStats.fromFirestore(d.data()!) : null);
 });
+
+// ══════════════════════════════════════════════
+//  LEADERBOARD SERVICE
+// ══════════════════════════════════════════════
+
+class LeaderboardService {
+  final _db = FirebaseFirestore.instance;
+
+  /// Classement général — trié par ELO, limité à [limit] entrées
+  Stream<List<ZuRanking>> watchLeaderboard({int limit = 50}) =>
+      _db.collection('rankings')
+          .orderBy('eloRating', descending: true)
+          .limit(limit)
+          .snapshots()
+          .map((s) => s.docs.map(ZuRanking.fromFirestore).toList());
+
+  /// Classement filtré par niveau
+  Stream<List<ZuRanking>> watchLeaderboardByLevel(int level, {int limit = 50}) =>
+      _db.collection('rankings')
+          .where('level', isEqualTo: level)
+          .orderBy('eloRating', descending: true)
+          .limit(limit)
+          .snapshots()
+          .map((s) => s.docs.map(ZuRanking.fromFirestore).toList());
+
+  /// Classement filtré par ville
+  Stream<List<ZuRanking>> watchLeaderboardByCity(String city, {int limit = 50}) =>
+      _db.collection('rankings')
+          .where('city', isEqualTo: city)
+          .orderBy('eloRating', descending: true)
+          .limit(limit)
+          .snapshots()
+          .map((s) => s.docs.map(ZuRanking.fromFirestore).toList());
+
+  /// Top classement hebdomadaire
+  Stream<List<ZuRanking>> watchWeeklyLeaderboard({int limit = 50}) =>
+      _db.collection('rankings')
+          .orderBy('weeklyPoints', descending: true)
+          .limit(limit)
+          .snapshots()
+          .map((s) => s.docs.map(ZuRanking.fromFirestore).toList());
+
+  /// Classement d'un joueur spécifique (pour profil public)
+  Future<ZuRanking?> getPlayerRanking(String uid) async {
+    final doc = await _db.collection('rankings').doc(uid).get();
+    return doc.exists ? ZuRanking.fromFirestore(doc) : null;
+  }
+
+  /// Tous les classements (pour filtre géographique côté client)
+  Stream<List<ZuRanking>> watchAllRankings({int limit = 300}) =>
+      _db.collection('rankings')
+          .orderBy('eloRating', descending: true)
+          .limit(limit)
+          .snapshots()
+          .map((s) => s.docs.map(ZuRanking.fromFirestore).toList());
+
+  /// Stream du classement de l'utilisateur connecté
+  Stream<ZuRanking?> watchMyRanking(String uid) =>
+      _db.collection('rankings')
+          .doc(uid)
+          .snapshots()
+          .map((d) => d.exists ? ZuRanking.fromFirestore(d) : null);
+}
+
+final leaderboardServiceProvider = Provider<LeaderboardService>((ref) => LeaderboardService());
+
+/// Filtre pour le classement
+class LeaderboardFilter {
+  final String type;  // 'global' | 'level' | 'city' | 'weekly'
+  final int? level;
+  final String? city;
+  const LeaderboardFilter(this.type, {this.level, this.city});
+
+  @override
+  bool operator ==(Object other) =>
+      other is LeaderboardFilter && other.type == type &&
+      other.level == level && other.city == city;
+  @override
+  int get hashCode => Object.hash(type, level, city);
+}
+
+final leaderboardProvider = StreamProvider.family<List<ZuRanking>, LeaderboardFilter>(
+  (ref, filter) {
+    final svc = ref.watch(leaderboardServiceProvider);
+    return switch (filter.type) {
+      'level'  => svc.watchLeaderboardByLevel(filter.level ?? 1),
+      'city'   => svc.watchLeaderboardByCity(filter.city ?? ''),
+      'weekly' => svc.watchWeeklyLeaderboard(),
+      _        => svc.watchLeaderboard(),
+    };
+  },
+);
+
+final allRankingsProvider = StreamProvider<List<ZuRanking>>((ref) =>
+    ref.watch(leaderboardServiceProvider).watchAllRankings());
+
+final myRankingProvider = StreamProvider<ZuRanking?>((ref) {
+  final uid = ref.watch(authStateProvider).valueOrNull?.uid;
+  if (uid == null) return Stream.value(null);
+  return ref.watch(leaderboardServiceProvider).watchMyRanking(uid);
+});
+
+final playerRankingProvider = FutureProvider.family<ZuRanking?, String>((ref, uid) =>
+    ref.watch(leaderboardServiceProvider).getPlayerRanking(uid));

@@ -64,6 +64,12 @@ service cloud.firestore {
       allow write: if false; // Gérés uniquement par les Cloud Functions
     }
 
+    // ── Rankings (classement public) ─────────────────────────
+    match /rankings/{uid} {
+      allow read: if isAuth(); // visible par tous les joueurs connectés
+      allow write: if false;   // Gérés uniquement par les Cloud Functions
+    }
+
     // ── Clubs partenaires ────────────────────────────────────
     match /clubs/{clubId} {
       allow read: if isAuth();
