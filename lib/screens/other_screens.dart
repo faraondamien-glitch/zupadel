@@ -975,11 +975,11 @@ class ProfileScreen extends ConsumerWidget {
                     const Divider(height: 1),
                     _MenuRow(
                       icon: '🏅',
-                      label: 'Classement FFT',
+                      label: 'Classement FFT Padel',
                       trailing: user?.fftRank != null
-                          ? ZuTag(user!.fftRank!, style: ZuTagStyle.green)
+                          ? ZuTag('#${user!.fftRank!}', style: ZuTagStyle.green)
                           : user?.fftLicense != null
-                              ? ZuTag('En attente…', style: ZuTagStyle.neutral)
+                              ? ZuTag('En attente de synchro', style: ZuTagStyle.neutral)
                               : ZuTag('Ajouter ma licence', style: ZuTagStyle.neutral),
                       onTap: () => context.go('/profile/edit'),
                     ),
@@ -1719,11 +1719,11 @@ class _FftRankTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final rank = user.fftRank;
+    final rank      = user.fftRank;
     final updatedAt = user.fftRankUpdatedAt;
     final syncLabel = updatedAt != null
-        ? 'Mis à jour le ${updatedAt.day.toString().padLeft(2, '0')}/${updatedAt.month.toString().padLeft(2, '0')}/${updatedAt.year}'
-        : 'Synchronisation auto chaque jour';
+        ? 'Synchro le ${updatedAt.day.toString().padLeft(2, '0')}/${updatedAt.month.toString().padLeft(2, '0')}/${updatedAt.year}'
+        : 'Synchro automatique chaque jour à 6h';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
@@ -1740,22 +1740,39 @@ class _FftRankTile extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Classement FFT',
+                Text('Classement national FFT Padel',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: ZuTheme.textSecondary)),
-                const SizedBox(height: 2),
-                Text(rank ?? 'Non renseigné',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: rank != null ? ZuTheme.textPrimary : ZuTheme.textSecondary)),
-                const SizedBox(height: 2),
-                Text(syncLabel,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: ZuTheme.accent, fontSize: 11)),
+                const SizedBox(height: 4),
+                rank != null
+                    ? RichText(text: TextSpan(children: [
+                        TextSpan(
+                          text: rank,
+                          style: GoogleFonts.syne(fontSize: 18,
+                              fontWeight: FontWeight.w800, color: ZuTheme.accent),
+                        ),
+                        TextSpan(
+                          text: 'ème au classement FFT',
+                          style: GoogleFonts.dmSans(fontSize: 12,
+                              color: ZuTheme.textSecondary),
+                        ),
+                      ]))
+                    : Text('Non renseigné',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: ZuTheme.textSecondary)),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    const Icon(Icons.sync_rounded, size: 12, color: ZuTheme.accent),
+                    const SizedBox(width: 4),
+                    Text(syncLabel,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: ZuTheme.accent, fontSize: 11)),
+                  ],
+                ),
               ],
             ),
           ),
-          if (rank != null)
-            ZuTag(rank, style: ZuTagStyle.green),
         ],
       ),
     );
@@ -2011,7 +2028,7 @@ class _StatsCard extends StatelessWidget {
                                       borderRadius: BorderRadius.circular(4),
                                     ),
                                     child: Text(
-                                      'FFT ${user!.fftRank!}',
+                                      '#${user!.fftRank!} FFT',
                                       style: GoogleFonts.syne(
                                         fontSize: 9, fontWeight: FontWeight.w700,
                                         color: ZuTheme.accent,

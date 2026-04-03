@@ -1379,8 +1379,8 @@ async function verifyGooglePurchase(productId: string, purchaseToken: string): P
 // ══════════════════════════════════════════════
 
 /**
- * Appelle l'API FFT pour récupérer le classement padel d'un licencié.
- * L'endpoint exact peut évoluer si la FFT change son infrastructure.
+ * Appelle l'API FFT pour récupérer le classement padel numérique d'un licencié.
+ * Retourne le rang national (ex: "1 542") ou null si indisponible.
  */
 async function fetchFftRanking(licence: string): Promise<string | null> {
   const url = `https://www.fft.fr/backend/api/classements/search?licence=${encodeURIComponent(licence)}`;
@@ -1392,9 +1392,32 @@ async function fetchFftRanking(licence: string): Promise<string | null> {
   });
   if (!res.ok) return null;
   const data = await res.json() as Record<string, unknown>;
-  // Essayer les clés connues selon la structure de réponse FFT
-  const rank = data?.classementPadel ?? data?.classementSimple ?? data?.classement ?? data?.ranking;
-  return rank != null ? String(rank) : null;
+
+  // Chercher le rang numérique national en priorité
+  const position =
+    data?.rangNational ??
+    data?.rang ??
+    data?.position ??
+    data?.classementNational ??
+    data?.rankPadel ??
+    data?.rank;
+
+  if (position != null) {
+    // Formater en nombre français avec espace comme séparateur de milliers (1 542)
+    const num = Number(position);
+    if (!isNaN(num) && num > 0) {
+      return num.toLocaleString("fr-FR");
+    }
+  }
+
+  // Fallback : série (P100, P250…) si pas de rang numérique disponible
+  const serie =
+    data?.classementPadel ??
+    data?.seriePadel ??
+    data?.classementSimple ??
+    data?.classement;
+
+  return serie != null ? String(serie) : null;
 }
 
 /**

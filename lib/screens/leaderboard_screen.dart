@@ -1019,7 +1019,7 @@ class _PlayerProfileBody extends StatelessWidget {
                 if (ranking.city != null)
                   ZuTag(ranking.city!, style: ZuTagStyle.neutral),
                 if (ranking.fftRank != null)
-                  ZuTag('FFT ${ranking.fftRank}', style: ZuTagStyle.green),
+                  ZuTag('#${ranking.fftRank} FFT', style: ZuTagStyle.green),
               ],
             ),
             const SizedBox(height: 12),
