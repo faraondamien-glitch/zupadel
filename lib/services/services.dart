@@ -912,6 +912,7 @@ class ReservationService {
 
   String get _uid => _auth.currentUser!.uid;
 
+  /// Réservations à venir (confirmées, dans le futur).
   Stream<List<ZuReservation>> watchMyReservations() => _db
       .collection('reservations')
       .where('userId', isEqualTo: _uid)
@@ -922,6 +923,15 @@ class ReservationService {
           .map(ZuReservation.fromFirestore)
           .where((r) => r.startTime.isAfter(DateTime.now()))
           .toList());
+
+  /// Historique complet : passées + annulées (30 derniers jours).
+  Stream<List<ZuReservation>> watchMyReservationsHistory() => _db
+      .collection('reservations')
+      .where('userId', isEqualTo: _uid)
+      .orderBy('startTime', descending: true)
+      .limit(50)
+      .snapshots()
+      .map((s) => s.docs.map(ZuReservation.fromFirestore).toList());
 
   /// Retourne les startTime déjà réservés pour un court sur un jour donné.
   Future<List<DateTime>> bookedSlots({
@@ -967,31 +977,9 @@ class ReservationService {
 
   /// Annule une réservation et rembourse les crédits.
   Future<void> cancelReservation(String reservationId) async {
-    final resRef  = _db.collection('reservations').doc(reservationId);
-    final userRef = _db.collection('users').doc(_uid);
-
-    await _db.runTransaction((tx) async {
-      final resDoc  = await tx.get(resRef);
-      final userDoc = await tx.get(userRef);
-      final res     = ZuReservation.fromFirestore(resDoc);
-      if (res.userId != _uid) throw Exception('Non autorisé');
-      if (res.status != ReservationStatus.confirmed) {
-        throw Exception('Réservation non annulable');
-      }
-      final credits = userDoc.data()?['credits'] as int? ?? 0;
-      tx.update(resRef, {'status': ReservationStatus.cancelled.name});
-      tx.update(userRef, {'credits': FieldValue.increment(res.priceCredits)});
-      tx.set(_db.collection('creditTransactions').doc(), {
-        'userId':        _uid,
-        'type':          CreditOpType.courtBookingRefund.name,
-        'amount':        res.priceCredits,
-        'balanceBefore': credits,
-        'balanceAfter':  credits + res.priceCredits,
-        'refId':         reservationId,
-        'description':   'Annulation terrain — ${res.courtName} @ ${res.clubName}',
-        'createdAt':     FieldValue.serverTimestamp(),
-      });
-    });
+    await _functions
+        .httpsCallable('cancelCourtReservation')
+        .call({'reservationId': reservationId});
   }
 }
 
@@ -1001,6 +989,12 @@ final myReservationsProvider = StreamProvider<List<ZuReservation>>((ref) {
   final auth = ref.watch(authStateProvider).valueOrNull;
   if (auth == null) return Stream.value([]);
   return ref.watch(reservationServiceProvider).watchMyReservations();
+});
+
+final myReservationsHistoryProvider = StreamProvider<List<ZuReservation>>((ref) {
+  final auth = ref.watch(authStateProvider).valueOrNull;
+  if (auth == null) return Stream.value([]);
+  return ref.watch(reservationServiceProvider).watchMyReservationsHistory();
 });
 
 // ══════════════════════════════════════════════

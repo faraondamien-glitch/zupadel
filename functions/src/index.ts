@@ -1285,6 +1285,60 @@ export const bookCourtSlot = onCall(
 );
 
 // ══════════════════════════════════════════════
+//  ANNULATION RÉSERVATION TERRAIN
+// ══════════════════════════════════════════════
+
+export const cancelCourtReservation = onCall(
+  {region: "europe-west3"},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Non authentifié");
+    const {reservationId} = request.data as {reservationId: string};
+    if (!reservationId) throw new HttpsError("invalid-argument", "reservationId requis");
+
+    const db  = getDb();
+    const uid = request.auth.uid;
+
+    const resRef  = db.collection("reservations").doc(reservationId);
+    const userRef = db.collection("users").doc(uid);
+
+    await db.runTransaction(async (tx) => {
+      const resDoc  = await tx.get(resRef);
+      const userDoc = await tx.get(userRef);
+
+      if (!resDoc.exists) throw new HttpsError("not-found", "Réservation introuvable");
+      const res = resDoc.data()!;
+
+      if (res.userId !== uid) throw new HttpsError("permission-denied", "Non autorisé");
+      if (res.status !== "confirmed") throw new HttpsError("failed-precondition", "Réservation non annulable");
+
+      // Vérifier que le créneau n'est pas déjà passé
+      const startTime = (res.startTime as admin.firestore.Timestamp).toDate();
+      if (startTime <= new Date()) {
+        throw new HttpsError("failed-precondition", "Impossible d'annuler un créneau passé");
+      }
+
+      const priceCredits = res.priceCredits as number;
+      const credits      = userDoc.data()?.credits as number ?? 0;
+
+      tx.update(resRef, {status: "cancelled"});
+      tx.update(userRef, {credits: admin.firestore.FieldValue.increment(priceCredits)});
+      tx.set(db.collection("creditTransactions").doc(), {
+        userId:        uid,
+        type:          "courtBookingRefund",
+        amount:        priceCredits,
+        balanceBefore: credits,
+        balanceAfter:  credits + priceCredits,
+        refId:         reservationId,
+        description:   `Annulation terrain — ${res.courtName as string} @ ${res.clubName as string}`,
+        createdAt:     admin.firestore.FieldValue.serverTimestamp(),
+      });
+    });
+
+    return {success: true};
+  }
+);
+
+// ══════════════════════════════════════════════
 //  NOTIFICATIONS MATCHS — ACCEPT / REFUSE
 // ══════════════════════════════════════════════
 

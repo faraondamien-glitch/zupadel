@@ -957,6 +957,12 @@ class ProfileScreen extends ConsumerWidget {
                     ),
                     const Divider(height: 1),
                     _MenuRow(
+                      icon: '🎾',
+                      label: 'Mes réservations terrain',
+                      onTap: () => context.push('/my-reservations'),
+                    ),
+                    const Divider(height: 1),
+                    _MenuRow(
                       icon: '🤝',
                       label: 'Code parrainage',
                       trailing: (user?.referralCode.isNotEmpty ?? false)
@@ -2928,7 +2934,18 @@ class ClubListScreen extends ConsumerWidget {
     final clubsAsync = ref.watch(clubsProvider);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Clubs partenaires')),
+      appBar: AppBar(
+        title: const Text('Clubs partenaires'),
+        actions: [
+          TextButton.icon(
+            onPressed: () => context.push('/my-reservations'),
+            icon: const Icon(Icons.event_note_rounded, size: 18),
+            label: Text('Mes résas',
+                style: GoogleFonts.syne(fontSize: 12, fontWeight: FontWeight.w600)),
+            style: TextButton.styleFrom(foregroundColor: ZuTheme.accent),
+          ),
+        ],
+      ),
       body: clubsAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error:   (e, _) => Center(child: Text('$e')),
@@ -2991,14 +3008,13 @@ class _ClubCard extends StatelessWidget {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
+                  if (club.isBookingEnabled)
+                    ZuTag('Résa en ligne', style: ZuTagStyle.green)
+                  else
+                    ZuTag('Bientôt', style: ZuTagStyle.neutral),
+                  const SizedBox(height: 4),
                   Text(
-                    '${club.pricePerSlotCredits} crédits',
-                    style: GoogleFonts.syne(
-                      fontSize: 13, fontWeight: FontWeight.w700, color: ZuTheme.accent,
-                    ),
-                  ),
-                  Text(
-                    '/ ${club.slotDurationMinutes} min',
+                    '${club.pricePerSlotCredits} cr · ${club.slotDurationMinutes} min',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
@@ -3060,8 +3076,12 @@ class ClubDetailScreen extends ConsumerWidget {
                     const SizedBox(height: 12),
                     Row(
                       children: [
-                        ZuTag('${club.pricePerSlotCredits} crédits / ${club.slotDurationMinutes} min',
-                            style: ZuTagStyle.green),
+                        if (club.isBookingEnabled)
+                          ZuTag('${club.pricePerSlotCredits} crédits / ${club.slotDurationMinutes} min',
+                              style: ZuTagStyle.green)
+                        else
+                          ZuTag('🕐 Réservation en ligne bientôt disponible',
+                              style: ZuTagStyle.neutral),
                         if (club.amenities.isNotEmpty) ...[
                           const SizedBox(width: 8),
                           Expanded(
@@ -3107,7 +3127,9 @@ class ClubDetailScreen extends ConsumerWidget {
                     children: courts.map((court) => Padding(
                       padding: const EdgeInsets.only(bottom: 10),
                       child: ZuCard(
-                        onTap: () => context.push('/clubs/${club.id}/courts/${court.id}'),
+                        onTap: club.isBookingEnabled
+                            ? () => context.push('/clubs/${club.id}/courts/${court.id}')
+                            : null,
                         child: Row(
                           children: [
                             Container(
@@ -3137,8 +3159,12 @@ class ClubDetailScreen extends ConsumerWidget {
                                 ],
                               ),
                             ),
-                            const Icon(Icons.chevron_right_rounded,
-                                color: ZuTheme.textSecondary),
+                            Icon(
+                              club.isBookingEnabled
+                                  ? Icons.chevron_right_rounded
+                                  : Icons.lock_outline_rounded,
+                              color: ZuTheme.textSecondary, size: 18,
+                            ),
                           ],
                         ),
                       ),
@@ -3681,6 +3707,320 @@ class ReservationConfirmScreen extends ConsumerWidget {
             ],
           );
         },
+      ),
+    );
+  }
+}
+}
+
+// ══════════════════════════════════════════════
+//  MES RÉSERVATIONS
+// ══════════════════════════════════════════════
+
+class MyReservationsScreen extends ConsumerStatefulWidget {
+  const MyReservationsScreen({super.key});
+
+  @override
+  ConsumerState<MyReservationsScreen> createState() => _MyReservationsScreenState();
+}
+
+class _MyReservationsScreenState extends ConsumerState<MyReservationsScreen>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tab = TabController(length: 2, vsync: this);
+
+  @override
+  void dispose() {
+    _tab.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Mes réservations'),
+        bottom: TabBar(
+          controller: _tab,
+          tabs: const [
+            Tab(text: 'À venir'),
+            Tab(text: 'Historique'),
+          ],
+          indicatorColor: ZuTheme.accent,
+          labelColor: ZuTheme.accent,
+          unselectedLabelColor: ZuTheme.textSecondary,
+        ),
+      ),
+      body: TabBarView(
+        controller: _tab,
+        children: const [
+          _UpcomingReservationsTab(),
+          _HistoryReservationsTab(),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Onglet À venir ───────────────────────────────────────────────
+
+class _UpcomingReservationsTab extends ConsumerWidget {
+  const _UpcomingReservationsTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final reservations = ref.watch(myReservationsProvider);
+    return reservations.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error:   (e, _) => Center(child: Text('$e')),
+      data: (list) {
+        if (list.isEmpty) {
+          return _ReservationEmptyState(
+            icon: '📅',
+            title: 'Aucune réservation à venir',
+            subtitle: 'Trouve un club et réserve ton prochain terrain !',
+            onAction: () => context.go('/clubs'),
+            actionLabel: 'Voir les clubs',
+          );
+        }
+        return ListView.builder(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+          itemCount: list.length,
+          itemBuilder: (_, i) => Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: _ReservationCard(reservation: list[i], canCancel: true),
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ── Onglet Historique ────────────────────────────────────────────
+
+class _HistoryReservationsTab extends ConsumerWidget {
+  const _HistoryReservationsTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final history = ref.watch(myReservationsHistoryProvider);
+    return history.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error:   (e, _) => Center(child: Text('$e')),
+      data: (list) {
+        final past = list.where((r) =>
+          r.startTime.isBefore(DateTime.now()) || r.status != ReservationStatus.confirmed
+        ).toList();
+        if (past.isEmpty) {
+          return const _ReservationEmptyState(
+            icon: '🕐',
+            title: 'Aucun historique',
+            subtitle: 'Tes réservations passées apparaîtront ici.',
+          );
+        }
+        return ListView.builder(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+          itemCount: past.length,
+          itemBuilder: (_, i) => Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: _ReservationCard(reservation: past[i], canCancel: false),
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ── Carte réservation ────────────────────────────────────────────
+
+class _ReservationCard extends ConsumerStatefulWidget {
+  final ZuReservation reservation;
+  final bool          canCancel;
+  const _ReservationCard({required this.reservation, required this.canCancel});
+
+  @override
+  ConsumerState<_ReservationCard> createState() => _ReservationCardState();
+}
+
+class _ReservationCardState extends ConsumerState<_ReservationCard> {
+  bool _cancelling = false;
+
+  Future<void> _cancel() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: ZuTheme.bgCard,
+        title: Text('Annuler la réservation',
+            style: Theme.of(context).textTheme.headlineSmall),
+        content: Text(
+          'Ta réservation sera annulée et ${widget.reservation.priceCredits} crédit${widget.reservation.priceCredits > 1 ? 's seront remboursés' : ' sera remboursé'}.',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('Garder', style: TextStyle(color: ZuTheme.textSecondary)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text('Annuler la résa',
+                style: GoogleFonts.syne(color: ZuTheme.accentRed, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _cancelling = true);
+    try {
+      await ref.read(reservationServiceProvider).cancelReservation(widget.reservation.id);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erreur : $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _cancelling = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final r      = widget.reservation;
+    final isPast = r.startTime.isBefore(DateTime.now());
+    final statusColor = switch (r.status) {
+      ReservationStatus.confirmed  => ZuTheme.accent,
+      ReservationStatus.cancelled  => ZuTheme.accentRed,
+      ReservationStatus.completed  => ZuTheme.textSecondary,
+    };
+    final statusLabel = switch (r.status) {
+      ReservationStatus.confirmed  => isPast ? 'Passé' : 'Confirmé',
+      ReservationStatus.cancelled  => 'Annulé',
+      ReservationStatus.completed  => 'Terminé',
+    };
+
+    return ZuCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // En-tête : club + badge statut
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(r.clubName,
+                        style: Theme.of(context).textTheme.headlineSmall),
+                    Text(r.courtName,
+                        style: Theme.of(context).textTheme.bodySmall),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: statusColor.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: statusColor.withOpacity(0.4)),
+                ),
+                child: Text(statusLabel,
+                    style: GoogleFonts.syne(fontSize: 11, fontWeight: FontWeight.w700,
+                        color: statusColor)),
+              ),
+            ],
+          ),
+          const Divider(height: 16),
+          // Infos créneau
+          Row(
+            children: [
+              const Icon(Icons.calendar_today_rounded,
+                  size: 14, color: ZuTheme.textSecondary),
+              const SizedBox(width: 6),
+              Text(
+                DateFormat('EEE d MMM yyyy', 'fr_FR').format(r.startTime),
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              const Icon(Icons.access_time_rounded,
+                  size: 14, color: ZuTheme.textSecondary),
+              const SizedBox(width: 6),
+              Text(
+                '${DateFormat('HH:mm').format(r.startTime)} → ${DateFormat('HH:mm').format(r.endTime)}',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              const Spacer(),
+              ZuTag('${r.priceCredits} crédits', style: ZuTagStyle.neutral),
+            ],
+          ),
+          // Bouton annuler (uniquement si futur + confirmé)
+          if (widget.canCancel && r.status == ReservationStatus.confirmed && !isPast) ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: _cancelling ? null : _cancel,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: ZuTheme.accentRed,
+                  side: BorderSide(color: ZuTheme.accentRed.withOpacity(0.5)),
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                child: _cancelling
+                    ? const SizedBox(width: 16, height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : Text('Annuler la réservation',
+                        style: GoogleFonts.syne(fontSize: 13, fontWeight: FontWeight.w700)),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ── Empty state ──────────────────────────────────────────────────
+
+class _ReservationEmptyState extends StatelessWidget {
+  final String   icon;
+  final String   title;
+  final String   subtitle;
+  final VoidCallback? onAction;
+  final String?  actionLabel;
+
+  const _ReservationEmptyState({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    this.onAction,
+    this.actionLabel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(icon, style: const TextStyle(fontSize: 48)),
+            const SizedBox(height: 16),
+            Text(title,
+                style: Theme.of(context).textTheme.headlineSmall,
+                textAlign: TextAlign.center),
+            const SizedBox(height: 8),
+            Text(subtitle,
+                style: Theme.of(context).textTheme.bodySmall,
+                textAlign: TextAlign.center),
+            if (onAction != null) ...[
+              const SizedBox(height: 20),
+              ZuButton(label: actionLabel ?? 'Voir', onPressed: onAction!),
+            ],
+          ],
+        ),
       ),
     );
   }
