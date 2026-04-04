@@ -597,6 +597,7 @@ class ZuClub {
   final String? website;
   final List<String> amenities;   // parking, vestiaires, douches, bar, ...
   final bool isActive;
+  final bool isBookingEnabled;  // true = club partenaire autorisé à la réservation en ligne
   final int pricePerSlotCredits;  // coût d'un créneau en crédits
   final int slotDurationMinutes;  // durée d'un créneau (60 ou 90 min)
   // horaires : "monday" → "08:00-22:00"  (vide = fermé)
@@ -612,6 +613,7 @@ class ZuClub {
     this.website,
     required this.amenities,
     required this.isActive,
+    required this.isBookingEnabled,
     required this.pricePerSlotCredits,
     required this.slotDurationMinutes,
     required this.openingHours,
@@ -629,6 +631,7 @@ class ZuClub {
       website:              d['website'],
       amenities:            List<String>.from(d['amenities'] ?? []),
       isActive:             d['isActive'] ?? false,
+      isBookingEnabled:     d['isBookingEnabled'] ?? false,
       pricePerSlotCredits:  d['pricePerSlotCredits'] ?? 5,
       slotDurationMinutes:  d['slotDurationMinutes'] ?? 90,
       openingHours:         Map<String, String>.from(d['openingHours'] ?? {}),

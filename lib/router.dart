@@ -152,6 +152,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, __) => const NotificationSettingsScreen(),
       ),
       GoRoute(
+        path: '/my-reservations',
+        builder: (_, __) => const MyReservationsScreen(),
+      ),
+      GoRoute(
         path: '/coaching/:id',
         builder: (_, state) => CoachDetailScreen(coachId: state.pathParameters['id']!),
       ),
